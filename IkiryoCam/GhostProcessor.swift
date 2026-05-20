@@ -120,20 +120,14 @@ final class GhostProcessor {
         reader.startReading()
         audioReader?.startReading()
 
-        // Delay buffer: store pixel buffers directly
+        // Delay buffer: retain reader pixel buffers directly (alwaysCopiesSampleData=true)
         var delayRing: [CVPixelBuffer] = []
         var frameIndex = 0
 
-        // Pre-allocate a reusable pixel buffer for ghost rendering
         let bounds = CGRect(origin: .zero, size: videoSize)
-
-        // Use output-sized buffers for delay ring (after downscale)
-        let outW = Int(videoSize.width)
-        let outH = Int(videoSize.height)
 
         while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
             autoreleasepool {
-                // Check reader/writer health
                 guard reader.status == .reading, writer.status == .writing else { return }
 
                 guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
@@ -153,11 +147,21 @@ final class GhostProcessor {
                     .transformed(by: corrTransform)
                     .cropped(to: bounds)
 
+                // Retain pixel buffer for delay ring (no copy needed, reader gives us a copy)
+                if delayFrames > 0 {
+                    delayRing.append(pixelBuffer)
+                    if delayRing.count > delayFrames + 2 {
+                        delayRing.removeFirst()
+                    }
+                }
+
                 // Ghost source: delayed frame or current
                 let ghostCI: CIImage
                 if delayFrames > 0 && delayRing.count > delayFrames {
                     let delayIdx = delayRing.count - 1 - delayFrames
                     ghostCI = CIImage(cvPixelBuffer: delayRing[delayIdx])
+                        .transformed(by: corrTransform)
+                        .cropped(to: bounds)
                 } else {
                     ghostCI = originalCI
                 }
@@ -180,35 +184,13 @@ final class GhostProcessor {
                 ciContext.render(finalImage, to: out)
                 adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
 
-                // Store output buffer copy for delay ring
-                if delayFrames > 0 {
-                    var copy: CVPixelBuffer?
-                    CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, nil, &copy)
-                    if let dst = copy {
-                        CVPixelBufferLockBaseAddress(out, .readOnly)
-                        CVPixelBufferLockBaseAddress(dst, [])
-                        let srcPtr = CVPixelBufferGetBaseAddress(out)
-                        let dstPtr = CVPixelBufferGetBaseAddress(dst)
-                        let bytes = CVPixelBufferGetDataSize(out)
-                        if let s = srcPtr, let d = dstPtr {
-                            memcpy(d, s, min(bytes, CVPixelBufferGetDataSize(dst)))
-                        }
-                        CVPixelBufferUnlockBaseAddress(dst, [])
-                        CVPixelBufferUnlockBaseAddress(out, .readOnly)
-                        delayRing.append(dst)
-                        if delayRing.count > delayFrames + 2 {
-                            delayRing.removeFirst()
-                        }
-                    }
-                }
-
                 frameIndex += 1
                 if frameIndex % 5 == 0 {
                     progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
                 }
 
-                // Clear GPU caches periodically to prevent GPU memory exhaustion
-                if frameIndex % 30 == 0 {
+                // Clear GPU caches periodically
+                if frameIndex % 20 == 0 {
                     ciContext.clearCaches()
                 }
             }
@@ -266,7 +248,7 @@ final class GhostProcessor {
                 "inputBVector": CIVector(x: 0, y: 0, z: 0.95, w: 0),
                 "inputBiasVector": CIVector(x: 0, y: 0, z: 0.03, w: 0),
             ])
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 2.5])
+            .applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: 3.0])
 
         // Fade + flicker
         let fadeLen = max(1, min(30, total / 6))
