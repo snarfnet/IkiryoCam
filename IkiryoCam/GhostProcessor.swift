@@ -17,6 +17,9 @@ final class GhostProcessor {
         self.ghostOpacity = ghostOpacity
     }
 
+    /// Max output dimension to prevent memory issues on large videos
+    private static let maxDimension: CGFloat = 1080
+
     func process(videoURL: URL, progress: @escaping (Double) -> Void) async throws -> URL {
         let asset = AVURLAsset(url: videoURL)
         let duration = try await asset.load(.duration)
@@ -26,8 +29,24 @@ final class GhostProcessor {
         let naturalSize = try await videoTrack.load(.naturalSize)
         let transform = try await videoTrack.load(.preferredTransform)
         let fps = try await videoTrack.load(.nominalFrameRate)
-        let videoSize = appliedSize(naturalSize: naturalSize, transform: transform)
-        let corrTransform = correctionTransform(transform: transform, size: videoSize)
+        let rawSize = appliedSize(naturalSize: naturalSize, transform: transform)
+
+        // Downscale if larger than maxDimension
+        let scale: CGFloat = {
+            let maxSide = max(rawSize.width, rawSize.height)
+            return maxSide > Self.maxDimension ? Self.maxDimension / maxSide : 1.0
+        }()
+        let videoSize = CGSize(
+            width: (rawSize.width * scale).rounded(.down),
+            height: (rawSize.height * scale).rounded(.down)
+        )
+        let corrTransform: CGAffineTransform = {
+            let base = correctionTransform(transform: transform, size: rawSize)
+            if scale < 1.0 {
+                return base.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+            }
+            return base
+        }()
         let totalSeconds = CMTimeGetSeconds(duration)
         let totalFrames = max(1, Int(totalSeconds * Double(fps > 0 ? fps : 30)))
         let timescale = CMTimeScale(fps > 0 ? fps : 30)
@@ -92,80 +111,73 @@ final class GhostProcessor {
         // Pre-allocate a reusable pixel buffer for ghost rendering
         let bounds = CGRect(origin: .zero, size: videoSize)
 
+        // Use output-sized buffers for delay ring (after downscale)
+        let outW = Int(videoSize.width)
+        let outH = Int(videoSize.height)
+
         while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
-            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                frameIndex += 1
-                continue
-            }
-
-            // Wait for writer
-            var w = 0
-            while !writerInput.isReadyForMoreMediaData && w < 300 {
-                Thread.sleep(forTimeInterval: 0.01)
-                w += 1
-            }
-            guard writerInput.isReadyForMoreMediaData else { frameIndex += 1; continue }
-
-            let originalCI = CIImage(cvPixelBuffer: pixelBuffer)
-                .transformed(by: corrTransform)
-                .cropped(to: bounds)
-
-            // Copy pixel buffer for delay ring
-            if delayFrames > 0 {
-                var copy: CVPixelBuffer?
-                let w = CVPixelBufferGetWidth(pixelBuffer)
-                let h = CVPixelBufferGetHeight(pixelBuffer)
-                CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA, nil, &copy)
-                if let dst = copy {
-                    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-                    CVPixelBufferLockBaseAddress(dst, [])
-                    let src = CVPixelBufferGetBaseAddress(pixelBuffer)
-                    let dstPtr = CVPixelBufferGetBaseAddress(dst)
-                    let bytes = CVPixelBufferGetDataSize(pixelBuffer)
-                    if let s = src, let d = dstPtr {
-                        memcpy(d, s, min(bytes, CVPixelBufferGetDataSize(dst)))
-                    }
-                    CVPixelBufferUnlockBaseAddress(dst, [])
-                    CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
-                    delayRing.append(dst)
-                    if delayRing.count > delayFrames + 2 {
-                        delayRing.removeFirst()
-                    }
+            autoreleasepool {
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                    frameIndex += 1
+                    return
                 }
-            }
 
-            // Ghost source: delayed frame or current
-            let ghostCI: CIImage
-            if delayFrames > 0 && delayRing.count > delayFrames {
-                let delayIdx = delayRing.count - 1 - delayFrames
-                ghostCI = CIImage(cvPixelBuffer: delayRing[delayIdx])
+                // Wait for writer
+                var waitCount = 0
+                while !writerInput.isReadyForMoreMediaData && waitCount < 300 {
+                    Thread.sleep(forTimeInterval: 0.01)
+                    waitCount += 1
+                }
+                guard writerInput.isReadyForMoreMediaData else { frameIndex += 1; return }
+
+                let originalCI = CIImage(cvPixelBuffer: pixelBuffer)
                     .transformed(by: corrTransform)
                     .cropped(to: bounds)
-            } else {
-                ghostCI = originalCI
-            }
 
-            // Composite ghost
-            let finalImage = ghostComposite(
-                original: originalCI,
-                ghost: ghostCI,
-                bounds: bounds,
-                frame: frameIndex,
-                total: totalFrames
-            )
+                // Render original to a clean buffer for delay ring (at output resolution)
+                if delayFrames > 0 {
+                    var copy: CVPixelBuffer?
+                    CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, nil, &copy)
+                    if let dst = copy {
+                        ciContext.render(originalCI, to: dst)
+                        delayRing.append(dst)
+                        if delayRing.count > delayFrames + 2 {
+                            delayRing.removeFirst()
+                        }
+                    }
+                }
 
-            // Write frame
-            guard let pool = adaptor.pixelBufferPool else { frameIndex += 1; continue }
-            var outBuf: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuf)
-            guard let out = outBuf else { frameIndex += 1; continue }
+                // Ghost source: delayed frame or current
+                let ghostCI: CIImage
+                if delayFrames > 0 && delayRing.count > delayFrames {
+                    let delayIdx = delayRing.count - 1 - delayFrames
+                    ghostCI = CIImage(cvPixelBuffer: delayRing[delayIdx])
+                } else {
+                    ghostCI = originalCI
+                }
 
-            ciContext.render(finalImage, to: out)
-            adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
+                // Composite ghost
+                let finalImage = ghostComposite(
+                    original: originalCI,
+                    ghost: ghostCI,
+                    bounds: bounds,
+                    frame: frameIndex,
+                    total: totalFrames
+                )
 
-            frameIndex += 1
-            if frameIndex % 3 == 0 {
-                progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
+                // Write frame
+                guard let pool = adaptor.pixelBufferPool else { frameIndex += 1; return }
+                var outBuf: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuf)
+                guard let out = outBuf else { frameIndex += 1; return }
+
+                ciContext.render(finalImage, to: out)
+                adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
+
+                frameIndex += 1
+                if frameIndex % 5 == 0 {
+                    progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
+                }
             }
         }
 
@@ -212,7 +224,7 @@ final class GhostProcessor {
                 "inputBVector": CIVector(x: 0, y: 0, z: 0.95, w: 0),
                 "inputBiasVector": CIVector(x: 0, y: 0, z: 0.03, w: 0),
             ])
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 4.0])
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 2.5])
 
         // Fade + flicker
         let fadeLen = max(1, min(30, total / 6))
