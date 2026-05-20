@@ -54,7 +54,7 @@ final class GhostProcessor {
 
             let duration = asset.duration
             let totalSeconds = CMTimeGetSeconds(duration)
-            let fadeSeconds = min(0.5, totalSeconds / 4)
+            let fadeSeconds = min(1.0, totalSeconds / 3)
 
             let composition = AVMutableVideoComposition(asset: asset) { request in
                 let source = request.sourceImage.clampedToExtent()
@@ -75,7 +75,7 @@ final class GhostProcessor {
                         "inputBVector": CIVector(x: 0, y: 0, z: 0.95, w: 0),
                         "inputBiasVector": CIVector(x: 0, y: 0, z: 0.03, w: 0),
                     ])
-                    .applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: 3.0])
+                    .applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: 8.0])
 
                 // Fade in/out
                 var opacity = self.ghostOpacity
@@ -87,8 +87,8 @@ final class GhostProcessor {
                     opacity *= t * t * (3 - 2 * t)
                 }
 
-                // Flicker
-                opacity *= 0.85 + 0.15 * sin(time * 13) * cos(time * 5.7)
+                // Flicker (more visible)
+                opacity *= 0.65 + 0.35 * sin(time * 11) * cos(time * 4.3)
 
                 let ghostAlpha = ghost.applyingFilter("CIColorMatrix", parameters: [
                     "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))
