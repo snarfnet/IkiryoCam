@@ -120,10 +120,7 @@ final class GhostProcessor {
         reader.startReading()
         audioReader?.startReading()
 
-        // Delay buffer: store CGImages (completely independent from reader's IOSurface pool)
-        var delayRing: [CGImage] = []
         var frameIndex = 0
-
         let bounds = CGRect(origin: .zero, size: videoSize)
 
         while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
@@ -143,37 +140,10 @@ final class GhostProcessor {
                 }
                 guard writerInput.isReadyForMoreMediaData else { frameIndex += 1; return }
 
+                // Just pass through original (diagnostic: no ghost effect)
                 let originalCI = CIImage(cvPixelBuffer: pixelBuffer)
                     .transformed(by: corrTransform)
                     .cropped(to: bounds)
-
-                // Snapshot to CGImage for delay ring (decouples from reader's buffer pool)
-                if delayFrames > 0 {
-                    if let cgSnap = ciContext.createCGImage(originalCI, from: bounds) {
-                        delayRing.append(cgSnap)
-                        if delayRing.count > delayFrames + 2 {
-                            delayRing.removeFirst()
-                        }
-                    }
-                }
-
-                // Ghost source: delayed frame or current
-                let ghostCI: CIImage
-                if delayFrames > 0 && delayRing.count > delayFrames {
-                    let delayIdx = delayRing.count - 1 - delayFrames
-                    ghostCI = CIImage(cgImage: delayRing[delayIdx])
-                } else {
-                    ghostCI = originalCI
-                }
-
-                // Composite ghost
-                let finalImage = ghostComposite(
-                    original: originalCI,
-                    ghost: ghostCI,
-                    bounds: bounds,
-                    frame: frameIndex,
-                    total: totalFrames
-                )
 
                 // Write frame
                 guard let pool = adaptor.pixelBufferPool else { frameIndex += 1; return }
@@ -181,17 +151,12 @@ final class GhostProcessor {
                 CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuf)
                 guard let out = outBuf else { frameIndex += 1; return }
 
-                ciContext.render(finalImage, to: out)
+                ciContext.render(originalCI, to: out)
                 adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
 
                 frameIndex += 1
                 if frameIndex % 5 == 0 {
                     progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
-                }
-
-                // Clear GPU caches periodically
-                if frameIndex % 20 == 0 {
-                    ciContext.clearCaches()
                 }
             }
         }
