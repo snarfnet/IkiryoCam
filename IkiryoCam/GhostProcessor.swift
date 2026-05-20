@@ -37,116 +37,73 @@ final class GhostProcessor {
 
     private func processSync(videoURL: URL, progress: @escaping (Double) -> Void) throws -> URL {
         let asset = AVURLAsset(url: videoURL)
-        let duration = asset.duration
-        guard let videoTrack = asset.tracks(withMediaType: .video).first else {
-            throw ProcessingError.noVideoTrack
+
+        // Use AVAssetExportSession for reliable export on all devices
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+            throw ProcessingError.writeFailed
         }
 
-        let naturalSize = videoTrack.naturalSize
-        let transform = videoTrack.preferredTransform
-        let fps = videoTrack.nominalFrameRate
-        let rawSize = appliedSize(naturalSize: naturalSize, transform: transform)
-
-        // Downscale if larger than maxDimension
-        let scale: CGFloat = {
-            let maxSide = max(rawSize.width, rawSize.height)
-            return maxSide > Self.maxDimension ? Self.maxDimension / maxSide : 1.0
-        }()
-        let videoSize = CGSize(
-            width: (rawSize.width * scale).rounded(.down),
-            height: (rawSize.height * scale).rounded(.down)
-        )
-        let corrTransform: CGAffineTransform = {
-            let base = correctionTransform(transform: transform, size: rawSize)
-            if scale < 1.0 {
-                return base.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-            }
-            return base
-        }()
-        let totalSeconds = CMTimeGetSeconds(duration)
-        let totalFrames = max(1, Int(totalSeconds * Double(fps > 0 ? fps : 30)))
-        let timescale = CMTimeScale(fps > 0 ? fps : 30)
-
-        // Output
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ikiryocam_\(UUID().uuidString).mov")
 
-        // Writer (passthrough - no re-encoding)
-        let writer = try AVAssetWriter(url: outputURL, fileType: .mov)
-        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil)
-        writerInput.expectsMediaDataInRealTime = false
-        writer.add(writerInput)
+        export.outputURL = outputURL
+        export.outputFileType = .mov
 
-        // Audio
-        let audioTracks = asset.tracks(withMediaType: .audio)
-        var audioWriterInput: AVAssetWriterInput?
-        var audioReaderOutput: AVAssetReaderTrackOutput?
-        var audioReader: AVAssetReader?
-        if let audioTrack = audioTracks.first {
-            let ar = try AVAssetReader(asset: asset)
-            let ao = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-            ar.add(ao)
-            let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
-            ai.expectsMediaDataInRealTime = false
-            writer.add(ai)
-            audioReader = ar; audioReaderOutput = ao; audioWriterInput = ai
-        }
+        // Apply ghost effect via video composition
+        let videoTrack = asset.tracks(withMediaType: .video).first
+        if let videoTrack = videoTrack {
+            let naturalSize = videoTrack.naturalSize
+            let transform = videoTrack.preferredTransform
+            let rawSize = appliedSize(naturalSize: naturalSize, transform: transform)
 
-        // Video reader (passthrough - no pixel format conversion)
-        let reader = try AVAssetReader(asset: asset)
-        let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)
-        reader.add(readerOutput)
+            let composition = AVMutableVideoComposition(asset: asset) { request in
+                let source = request.sourceImage.clampedToExtent()
+                let bounds = CGRect(origin: .zero, size: request.renderSize)
 
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-        reader.startReading()
-        audioReader?.startReading()
+                // Ghost: offset + color shift + transparency
+                let ghost = source
+                    .transformed(by: CGAffineTransform(translationX: self.offsetX, y: -self.offsetY))
+                    .applyingFilter("CIColorControls", parameters: [
+                        kCIInputSaturationKey: 0.1,
+                        kCIInputBrightnessKey: -0.1,
+                    ])
+                    .applyingFilter("CIColorMatrix", parameters: [
+                        "inputRVector": CIVector(x: 0.7, y: 0, z: 0, w: 0),
+                        "inputGVector": CIVector(x: 0, y: 0.75, z: 0, w: 0),
+                        "inputBVector": CIVector(x: 0, y: 0, z: 0.95, w: 0),
+                        "inputBiasVector": CIVector(x: 0, y: 0, z: 0.03, w: 0),
+                    ])
+                    .applyingFilter("CIColorMatrix", parameters: [
+                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(self.ghostOpacity))
+                    ])
 
-        var frameIndex = 0
-
-        while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
-            // Wait for writer
-            while !writerInput.isReadyForMoreMediaData {
-                Thread.sleep(forTimeInterval: 0.01)
+                let result = ghost.composited(over: source).cropped(to: bounds)
+                request.finish(with: result, context: nil)
             }
 
-            writerInput.append(sampleBuffer)
+            // Downscale if needed
+            let scale: CGFloat = {
+                let maxSide = max(rawSize.width, rawSize.height)
+                return maxSide > Self.maxDimension ? Self.maxDimension / maxSide : 1.0
+            }()
+            composition.renderSize = CGSize(
+                width: (rawSize.width * scale).rounded(.down),
+                height: (rawSize.height * scale).rounded(.down)
+            )
 
-            frameIndex += 1
-            if frameIndex % 5 == 0 {
-                progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
-            }
+            export.videoComposition = composition
         }
 
-        // Check if reader failed
-        if reader.status == .failed {
-            throw reader.error ?? ProcessingError.writeFailed
-        }
-
-        writerInput.markAsFinished()
-
-        // Audio
-        if let ao = audioReaderOutput, let ai = audioWriterInput {
-            while let buf = ao.copyNextSampleBuffer() {
-                var waitCount = 0
-                while !ai.isReadyForMoreMediaData && waitCount < 300 {
-                    Thread.sleep(forTimeInterval: 0.01); waitCount += 1
-                }
-                if ai.isReadyForMoreMediaData { ai.append(buf) }
-            }
-            ai.markAsFinished()
-        }
-
-        // Finish writing (synchronous wait)
+        // Export synchronously with progress polling
         let semaphore = DispatchSemaphore(value: 0)
-        writer.finishWriting { semaphore.signal() }
-        semaphore.wait()
+        export.exportAsynchronously { semaphore.signal() }
 
-        reader.cancelReading()
-        audioReader?.cancelReading()
+        while semaphore.wait(timeout: .now() + 0.2) == .timedOut {
+            progress(min(0.95, Double(export.progress)))
+        }
 
-        guard writer.status == .completed else {
-            throw writer.error ?? ProcessingError.writeFailed
+        guard export.status == .completed else {
+            throw export.error ?? ProcessingError.writeFailed
         }
 
         progress(1.0)
