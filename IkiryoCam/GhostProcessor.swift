@@ -1,7 +1,5 @@
 import AVFoundation
-import Vision
 import CoreImage
-import CoreImage.CIFilterBuiltins
 import UIKit
 
 final class GhostProcessor {
@@ -27,12 +25,12 @@ final class GhostProcessor {
 
         let naturalSize = try await videoTrack.load(.naturalSize)
         let transform = try await videoTrack.load(.preferredTransform)
-        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
-        let fps = nominalFrameRate > 0 ? nominalFrameRate : 30.0
+        let fps = try await videoTrack.load(.nominalFrameRate)
         let videoSize = appliedSize(naturalSize: naturalSize, transform: transform)
         let corrTransform = correctionTransform(transform: transform, size: videoSize)
-
-        let totalFrames = Int(CMTimeGetSeconds(duration) * Double(fps))
+        let totalSeconds = CMTimeGetSeconds(duration)
+        let totalFrames = max(1, Int(totalSeconds * Double(fps > 0 ? fps : 30)))
+        let timescale = CMTimeScale(fps > 0 ? fps : 30)
 
         // Output
         let outputURL = FileManager.default.temporaryDirectory
@@ -40,15 +38,12 @@ final class GhostProcessor {
 
         // Writer
         let writer = try AVAssetWriter(url: outputURL, fileType: .mov)
-        let writerSettings: [String: Any] = [
+        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: Int(videoSize.width),
             AVVideoHeightKey: Int(videoSize.height),
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 5_000_000
-            ]
-        ]
-        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: writerSettings)
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 5_000_000]
+        ])
         writerInput.expectsMediaDataInRealTime = false
         writer.add(writerInput)
 
@@ -61,22 +56,20 @@ final class GhostProcessor {
             ]
         )
 
-        // Audio setup (must be added before starting)
+        // Audio
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         var audioWriterInput: AVAssetWriterInput?
         var audioReaderOutput: AVAssetReaderTrackOutput?
         var audioReader: AVAssetReader?
         if let audioTrack = audioTracks.first {
-            let aReader = try AVAssetReader(asset: asset)
-            let aOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-            aOutput.alwaysCopiesSampleData = true
-            aReader.add(aOutput)
-            let aInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
-            aInput.expectsMediaDataInRealTime = false
-            writer.add(aInput)
-            audioReader = aReader
-            audioReaderOutput = aOutput
-            audioWriterInput = aInput
+            let ar = try AVAssetReader(asset: asset)
+            let ao = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+            ao.alwaysCopiesSampleData = true
+            ar.add(ao)
+            let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
+            ai.expectsMediaDataInRealTime = false
+            writer.add(ai)
+            audioReader = ar; audioReaderOutput = ao; audioWriterInput = ai
         }
 
         // Video reader
@@ -84,7 +77,7 @@ final class GhostProcessor {
         let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ])
-        readerOutput.alwaysCopiesSampleData = true
+        readerOutput.alwaysCopiesSampleData = false
         reader.add(readerOutput)
 
         writer.startWriting()
@@ -92,10 +85,12 @@ final class GhostProcessor {
         reader.startReading()
         audioReader?.startReading()
 
-        // Ring buffer for delayed frames (store as CGImage, not CIImage)
-        var delayBuffer: [CGImage] = []
-        let maxBuffer = delayFrames + 2
+        // Delay buffer: store pixel buffers directly
+        var delayRing: [CVPixelBuffer] = []
         var frameIndex = 0
+
+        // Pre-allocate a reusable pixel buffer for ghost rendering
+        let bounds = CGRect(origin: .zero, size: videoSize)
 
         while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
@@ -103,183 +98,162 @@ final class GhostProcessor {
                 continue
             }
 
-            // Wait for writer to be ready (with timeout)
-            var waitCount = 0
-            while !writerInput.isReadyForMoreMediaData {
+            // Wait for writer
+            var w = 0
+            while !writerInput.isReadyForMoreMediaData && w < 300 {
                 Thread.sleep(forTimeInterval: 0.01)
-                waitCount += 1
-                if waitCount > 500 { break } // 5 second max wait
+                w += 1
             }
-            if !writerInput.isReadyForMoreMediaData {
-                frameIndex += 1
-                continue
-            }
+            guard writerInput.isReadyForMoreMediaData else { frameIndex += 1; continue }
 
             let originalCI = CIImage(cvPixelBuffer: pixelBuffer)
                 .transformed(by: corrTransform)
-                .cropped(to: CGRect(origin: .zero, size: videoSize))
+                .cropped(to: bounds)
 
-            // Render current frame to CGImage for delay buffer
-            if let cgImg = ciContext.createCGImage(originalCI, from: CGRect(origin: .zero, size: videoSize)) {
-                delayBuffer.append(cgImg)
-                if delayBuffer.count > maxBuffer {
-                    delayBuffer.removeFirst()
+            // Copy pixel buffer for delay ring
+            if delayFrames > 0 {
+                var copy: CVPixelBuffer?
+                let w = CVPixelBufferGetWidth(pixelBuffer)
+                let h = CVPixelBufferGetHeight(pixelBuffer)
+                CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA, nil, &copy)
+                if let dst = copy {
+                    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+                    CVPixelBufferLockBaseAddress(dst, [])
+                    let src = CVPixelBufferGetBaseAddress(pixelBuffer)
+                    let dstPtr = CVPixelBufferGetBaseAddress(dst)
+                    let bytes = CVPixelBufferGetDataSize(pixelBuffer)
+                    if let s = src, let d = dstPtr {
+                        memcpy(d, s, min(bytes, CVPixelBufferGetDataSize(dst)))
+                    }
+                    CVPixelBufferUnlockBaseAddress(dst, [])
+                    CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+                    delayRing.append(dst)
+                    if delayRing.count > delayFrames + 2 {
+                        delayRing.removeFirst()
+                    }
                 }
             }
 
-            // Get delayed frame
-            let delayIdx = max(0, delayBuffer.count - 1 - delayFrames)
-            let hasDelayedFrame = delayIdx < delayBuffer.count && delayBuffer.count > delayFrames
-
-            // Composite
-            let finalImage: CIImage
-            if hasDelayedFrame {
-                let delayedCI = CIImage(cgImage: delayBuffer[delayIdx])
-                finalImage = createGhostComposite(
-                    original: originalCI,
-                    ghostSource: delayedCI,
-                    videoSize: videoSize,
-                    frameIndex: frameIndex,
-                    totalFrames: totalFrames
-                )
+            // Ghost source: delayed frame or current
+            let ghostCI: CIImage
+            if delayFrames > 0 && delayRing.count > delayFrames {
+                let delayIdx = delayRing.count - 1 - delayFrames
+                ghostCI = CIImage(cvPixelBuffer: delayRing[delayIdx])
+                    .transformed(by: corrTransform)
+                    .cropped(to: bounds)
             } else {
-                finalImage = originalCI
+                ghostCI = originalCI
             }
 
-            // Write
-            guard let pool = adaptor.pixelBufferPool else {
-                frameIndex += 1
-                continue
-            }
-            var outBuffer: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuffer)
-            guard let outputBuffer = outBuffer else {
-                frameIndex += 1
-                continue
-            }
+            // Composite ghost
+            let finalImage = ghostComposite(
+                original: originalCI,
+                ghost: ghostCI,
+                bounds: bounds,
+                frame: frameIndex,
+                total: totalFrames
+            )
 
-            ciContext.render(finalImage, to: outputBuffer)
-            let pts = CMTime(value: CMTimeValue(frameIndex), timescale: CMTimeScale(fps))
-            adaptor.append(outputBuffer, withPresentationTime: pts)
+            // Write frame
+            guard let pool = adaptor.pixelBufferPool else { frameIndex += 1; continue }
+            var outBuf: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuf)
+            guard let out = outBuf else { frameIndex += 1; continue }
+
+            ciContext.render(finalImage, to: out)
+            adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
 
             frameIndex += 1
-            if frameIndex % 2 == 0 {
-                progress(Double(frameIndex) / Double(max(totalFrames, 1)))
+            if frameIndex % 3 == 0 {
+                progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
             }
         }
 
         writerInput.markAsFinished()
 
-        // Audio passthrough (already set up before writing started)
-        if let aOutput = audioReaderOutput, let aInput = audioWriterInput {
-            while let buf = aOutput.copyNextSampleBuffer() {
+        // Audio
+        if let ao = audioReaderOutput, let ai = audioWriterInput {
+            while let buf = ao.copyNextSampleBuffer() {
                 var w = 0
-                while !aInput.isReadyForMoreMediaData {
-                    Thread.sleep(forTimeInterval: 0.01)
-                    w += 1; if w > 500 { break }
+                while !ai.isReadyForMoreMediaData && w < 300 {
+                    Thread.sleep(forTimeInterval: 0.01); w += 1
                 }
-                if aInput.isReadyForMoreMediaData {
-                    aInput.append(buf)
-                }
+                if ai.isReadyForMoreMediaData { ai.append(buf) }
             }
-            aInput.markAsFinished()
+            ai.markAsFinished()
         }
 
         await writer.finishWriting()
         reader.cancelReading()
+        audioReader?.cancelReading()
 
-        if writer.status == .failed {
+        guard writer.status == .completed else {
             throw writer.error ?? ProcessingError.writeFailed
         }
 
+        progress(1.0)
         return outputURL
     }
 
     // MARK: - Ghost Composite
 
-    private func createGhostComposite(
-        original: CIImage,
-        ghostSource: CIImage,
-        videoSize: CGSize,
-        frameIndex: Int,
-        totalFrames: Int
-    ) -> CIImage {
-        let shifted = ghostSource.transformed(by: CGAffineTransform(translationX: offsetX, y: -offsetY))
+    private func ghostComposite(original: CIImage, ghost: CIImage, bounds: CGRect, frame: Int, total: Int) -> CIImage {
+        let shifted = ghost.transformed(by: CGAffineTransform(translationX: offsetX, y: -offsetY))
 
-        // Desaturate + darken
-        let desaturated = shifted.applyingFilter("CIColorControls", parameters: [
-            kCIInputSaturationKey: 0.1,
-            kCIInputBrightnessKey: -0.1,
-            kCIInputContrastKey: 1.2,
-        ])
+        let processed = shifted
+            .applyingFilter("CIColorControls", parameters: [
+                kCIInputSaturationKey: 0.1,
+                kCIInputBrightnessKey: -0.1,
+                kCIInputContrastKey: 1.2,
+            ])
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 0.7, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: 0.75, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 0.95, w: 0),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0.03, w: 0),
+            ])
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 4.0])
 
-        // Cold blue tint
-        let tinted = desaturated.applyingFilter("CIColorMatrix", parameters: [
-            "inputRVector": CIVector(x: 0.7, y: 0, z: 0, w: 0),
-            "inputGVector": CIVector(x: 0, y: 0.75, z: 0, w: 0),
-            "inputBVector": CIVector(x: 0, y: 0, z: 0.95, w: 0),
-            "inputBiasVector": CIVector(x: 0, y: 0, z: 0.03, w: 0),
-        ])
-
-        // Soft blur
-        let blurred = tinted.applyingFilter("CIGaussianBlur", parameters: [
-            kCIInputRadiusKey: 4.0
-        ])
-
-        // Fade envelope
-        let fadeLen = min(30, totalFrames / 6)
-        let fadeOutStart = totalFrames - fadeLen
+        // Fade + flicker
+        let fadeLen = max(1, min(30, total / 6))
         var opacity = ghostOpacity
-        if frameIndex < fadeLen {
-            let t = Double(frameIndex) / Double(max(fadeLen, 1))
+        if frame < fadeLen {
+            let t = Double(frame) / Double(fadeLen)
             opacity *= t * t * (3 - 2 * t)
-        } else if frameIndex > fadeOutStart {
-            let t = Double(totalFrames - frameIndex) / Double(max(fadeLen, 1))
+        } else if frame > total - fadeLen {
+            let t = Double(total - frame) / Double(fadeLen)
             opacity *= t * t * (3 - 2 * t)
         }
+        opacity *= 0.85 + 0.15 * sin(Double(frame) * 0.7) * cos(Double(frame) * 0.3)
 
-        // Flicker
-        let flicker = 0.85 + 0.15 * sin(Double(frameIndex) * 0.7) * cos(Double(frameIndex) * 0.3)
-        opacity *= flicker
-
-        // Alpha blend
-        let ghostAlpha = blurred.applyingFilter("CIColorMatrix", parameters: [
+        let ghostAlpha = processed.applyingFilter("CIColorMatrix", parameters: [
             "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))
         ])
 
-        return ghostAlpha
-            .composited(over: original)
-            .cropped(to: CGRect(origin: .zero, size: videoSize))
+        return ghostAlpha.composited(over: original).cropped(to: bounds)
     }
 
     // MARK: - Helpers
 
     private func appliedSize(naturalSize: CGSize, transform: CGAffineTransform) -> CGSize {
-        let rect = CGRect(origin: .zero, size: naturalSize).applying(transform)
-        return CGSize(width: abs(rect.width), height: abs(rect.height))
+        let r = CGRect(origin: .zero, size: naturalSize).applying(transform)
+        return CGSize(width: abs(r.width), height: abs(r.height))
     }
 
     private func correctionTransform(transform: CGAffineTransform, size: CGSize) -> CGAffineTransform {
         var t = transform
         if t.a == 0 && t.d == 0 {
-            if t.b == 1.0 && t.c == -1.0 {
-                t.tx = size.width; t.ty = 0
-            } else if t.b == -1.0 && t.c == 1.0 {
-                t.tx = 0; t.ty = size.height
-            }
+            if t.b == 1.0 && t.c == -1.0 { t.tx = size.width; t.ty = 0 }
+            else if t.b == -1.0 && t.c == 1.0 { t.tx = 0; t.ty = size.height }
         } else if t.a == -1.0 && t.d == -1.0 {
             t.tx = size.width; t.ty = size.height
-        } else {
-            return .identity
-        }
+        } else { return .identity }
         return t
     }
 }
 
 enum ProcessingError: LocalizedError {
-    case noVideoTrack
-    case writeFailed
-
+    case noVideoTrack, writeFailed
     var errorDescription: String? {
         switch self {
         case .noVideoTrack: return "動画トラックが見つかりません"
