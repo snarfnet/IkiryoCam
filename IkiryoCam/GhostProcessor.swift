@@ -97,11 +97,10 @@ final class GhostProcessor {
         let maxBuffer = delayFrames + 2
         var frameIndex = 0
 
-        while reader.status == .reading {
-            guard let sampleBuffer = readerOutput.copyNextSampleBuffer(),
-                  let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                if reader.status == .reading { continue }
-                break
+        while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                frameIndex += 1
+                continue
             }
 
             // Wait for writer to be ready (with timeout)
