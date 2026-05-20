@@ -61,6 +61,24 @@ final class GhostProcessor {
             ]
         )
 
+        // Audio setup (must be added before starting)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        var audioWriterInput: AVAssetWriterInput?
+        var audioReaderOutput: AVAssetReaderTrackOutput?
+        var audioReader: AVAssetReader?
+        if let audioTrack = audioTracks.first {
+            let aReader = try AVAssetReader(asset: asset)
+            let aOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+            aOutput.alwaysCopiesSampleData = true
+            aReader.add(aOutput)
+            let aInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
+            aInput.expectsMediaDataInRealTime = false
+            writer.add(aInput)
+            audioReader = aReader
+            audioReaderOutput = aOutput
+            audioWriterInput = aInput
+        }
+
         // Video reader
         let reader = try AVAssetReader(asset: asset)
         let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
@@ -72,6 +90,7 @@ final class GhostProcessor {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
         reader.startReading()
+        audioReader?.startReading()
 
         // Ring buffer for delayed frames (store as CGImage, not CIImage)
         var delayBuffer: [CGImage] = []
@@ -152,24 +171,17 @@ final class GhostProcessor {
 
         writerInput.markAsFinished()
 
-        // Audio passthrough
-        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
-        if let audioTrack = audioTracks.first {
-            let aReader = try AVAssetReader(asset: asset)
-            let aOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-            aReader.add(aOutput)
-            let aInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
-            aInput.expectsMediaDataInRealTime = false
-            writer.add(aInput)
-            writer.startSession(atSourceTime: .zero)
-            aReader.startReading()
+        // Audio passthrough (already set up before writing started)
+        if let aOutput = audioReaderOutput, let aInput = audioWriterInput {
             while let buf = aOutput.copyNextSampleBuffer() {
                 var w = 0
                 while !aInput.isReadyForMoreMediaData {
                     Thread.sleep(forTimeInterval: 0.01)
                     w += 1; if w > 500 { break }
                 }
-                aInput.append(buf)
+                if aInput.isReadyForMoreMediaData {
+                    aInput.append(buf)
+                }
             }
             aInput.markAsFinished()
         }
