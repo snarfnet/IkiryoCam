@@ -21,14 +21,30 @@ final class GhostProcessor {
     private static let maxDimension: CGFloat = 1080
 
     func process(videoURL: URL, progress: @escaping (Double) -> Void) async throws -> URL {
-        let asset = AVURLAsset(url: videoURL)
-        let duration = try await asset.load(.duration)
-        let tracks = try await asset.loadTracks(withMediaType: .video)
-        guard let videoTrack = tracks.first else { throw ProcessingError.noVideoTrack }
+        try await withCheckedThrowingContinuation { continuation in
+            processingQueue.async {
+                do {
+                    let url = try self.processSync(videoURL: videoURL, progress: progress)
+                    continuation.resume(returning: url)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 
-        let naturalSize = try await videoTrack.load(.naturalSize)
-        let transform = try await videoTrack.load(.preferredTransform)
-        let fps = try await videoTrack.load(.nominalFrameRate)
+    private let processingQueue = DispatchQueue(label: "com.tokyonasu.ikiryocam.processing", qos: .userInitiated)
+
+    private func processSync(videoURL: URL, progress: @escaping (Double) -> Void) throws -> URL {
+        let asset = AVURLAsset(url: videoURL)
+        let duration = asset.duration
+        guard let videoTrack = asset.tracks(withMediaType: .video).first else {
+            throw ProcessingError.noVideoTrack
+        }
+
+        let naturalSize = videoTrack.naturalSize
+        let transform = videoTrack.preferredTransform
+        let fps = videoTrack.nominalFrameRate
         let rawSize = appliedSize(naturalSize: naturalSize, transform: transform)
 
         // Downscale if larger than maxDimension
@@ -76,7 +92,7 @@ final class GhostProcessor {
         )
 
         // Audio
-        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        let audioTracks = asset.tracks(withMediaType: .audio)
         var audioWriterInput: AVAssetWriterInput?
         var audioReaderOutput: AVAssetReaderTrackOutput?
         var audioReader: AVAssetReader?
@@ -117,6 +133,9 @@ final class GhostProcessor {
 
         while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
             autoreleasepool {
+                // Check reader/writer health
+                guard reader.status == .reading, writer.status == .writing else { return }
+
                 guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
                     frameIndex += 1
                     return
@@ -161,7 +180,7 @@ final class GhostProcessor {
                 ciContext.render(finalImage, to: out)
                 adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
 
-                // Store output buffer copy for delay ring (reuse rendered result, no extra render)
+                // Store output buffer copy for delay ring
                 if delayFrames > 0 {
                     var copy: CVPixelBuffer?
                     CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, nil, &copy)
@@ -187,7 +206,17 @@ final class GhostProcessor {
                 if frameIndex % 5 == 0 {
                     progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
                 }
+
+                // Clear GPU caches periodically to prevent GPU memory exhaustion
+                if frameIndex % 30 == 0 {
+                    ciContext.clearCaches()
+                }
             }
+        }
+
+        // Check if reader failed
+        if reader.status == .failed {
+            throw reader.error ?? ProcessingError.writeFailed
         }
 
         writerInput.markAsFinished()
@@ -195,16 +224,20 @@ final class GhostProcessor {
         // Audio
         if let ao = audioReaderOutput, let ai = audioWriterInput {
             while let buf = ao.copyNextSampleBuffer() {
-                var w = 0
-                while !ai.isReadyForMoreMediaData && w < 300 {
-                    Thread.sleep(forTimeInterval: 0.01); w += 1
+                var waitCount = 0
+                while !ai.isReadyForMoreMediaData && waitCount < 300 {
+                    Thread.sleep(forTimeInterval: 0.01); waitCount += 1
                 }
                 if ai.isReadyForMoreMediaData { ai.append(buf) }
             }
             ai.markAsFinished()
         }
 
-        await writer.finishWriting()
+        // Finish writing (synchronous wait)
+        let semaphore = DispatchSemaphore(value: 0)
+        writer.finishWriting { semaphore.signal() }
+        semaphore.wait()
+
         reader.cancelReading()
         audioReader?.cancelReading()
 
