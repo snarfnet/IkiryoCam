@@ -16,7 +16,6 @@ struct ContentView: View {
     // Ghost settings
     @State private var offsetX: CGFloat = 30
     @State private var offsetY: CGFloat = 0
-    @State private var delayFrames: Double = 8
     @State private var ghostOpacity: Double = 0.35
 
     var body: some View {
@@ -104,7 +103,6 @@ struct ContentView: View {
 
                                 settingRow(title: "横ずれ", value: $offsetX, range: -100...100, unit: "px")
                                 settingRow(title: "縦ずれ", value: $offsetY, range: -100...100, unit: "px")
-                                settingRow(title: "遅延", value: $delayFrames, range: 0...30, unit: "F")
                                 settingRow(title: "透明度", value: $ghostOpacity, range: 0.1...0.7, unit: "")
                             }
                             .padding()
@@ -238,7 +236,6 @@ struct ContentView: View {
         let processor = GhostProcessor(
             offsetX: offsetX,
             offsetY: offsetY,
-            delayFrames: Int(delayFrames),
             ghostOpacity: ghostOpacity
         )
 
