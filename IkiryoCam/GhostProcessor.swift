@@ -96,7 +96,7 @@ final class GhostProcessor {
         let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ])
-        readerOutput.alwaysCopiesSampleData = false
+        readerOutput.alwaysCopiesSampleData = true
         reader.add(readerOutput)
 
         writer.startWriting()
@@ -134,19 +134,6 @@ final class GhostProcessor {
                     .transformed(by: corrTransform)
                     .cropped(to: bounds)
 
-                // Render original to a clean buffer for delay ring (at output resolution)
-                if delayFrames > 0 {
-                    var copy: CVPixelBuffer?
-                    CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, nil, &copy)
-                    if let dst = copy {
-                        ciContext.render(originalCI, to: dst)
-                        delayRing.append(dst)
-                        if delayRing.count > delayFrames + 2 {
-                            delayRing.removeFirst()
-                        }
-                    }
-                }
-
                 // Ghost source: delayed frame or current
                 let ghostCI: CIImage
                 if delayFrames > 0 && delayRing.count > delayFrames {
@@ -173,6 +160,28 @@ final class GhostProcessor {
 
                 ciContext.render(finalImage, to: out)
                 adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
+
+                // Store output buffer copy for delay ring (reuse rendered result, no extra render)
+                if delayFrames > 0 {
+                    var copy: CVPixelBuffer?
+                    CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, nil, &copy)
+                    if let dst = copy {
+                        CVPixelBufferLockBaseAddress(out, .readOnly)
+                        CVPixelBufferLockBaseAddress(dst, [])
+                        let srcPtr = CVPixelBufferGetBaseAddress(out)
+                        let dstPtr = CVPixelBufferGetBaseAddress(dst)
+                        let bytes = CVPixelBufferGetDataSize(out)
+                        if let s = srcPtr, let d = dstPtr {
+                            memcpy(d, s, min(bytes, CVPixelBufferGetDataSize(dst)))
+                        }
+                        CVPixelBufferUnlockBaseAddress(dst, [])
+                        CVPixelBufferUnlockBaseAddress(out, .readOnly)
+                        delayRing.append(dst)
+                        if delayRing.count > delayFrames + 2 {
+                            delayRing.removeFirst()
+                        }
+                    }
+                }
 
                 frameIndex += 1
                 if frameIndex % 5 == 0 {

@@ -10,6 +10,8 @@ struct ContentView: View {
     @State private var progress: Double = 0
     @State private var errorMessage: String?
     @State private var showResult = false
+    @State private var thumbnail: UIImage?
+    @State private var videoDurationText: String = ""
 
     // Ghost settings
     @State private var offsetX: CGFloat = 30
@@ -60,6 +62,38 @@ struct ContentView: View {
                             )
                         }
                         .padding(.horizontal)
+
+                        // Video preview
+                        if let thumb = thumbnail {
+                            HStack(spacing: 12) {
+                                Image(uiImage: thumb)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 80, height: 60)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("選択済み")
+                                        .font(.caption)
+                                        .foregroundColor(.purple)
+                                    Text(videoDurationText)
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                                Spacer()
+                                PhotosPicker(selection: $selectedItem, matching: .videos) {
+                                    Text("変更")
+                                        .font(.caption)
+                                        .foregroundColor(.purple)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(Capsule().fill(Color.purple.opacity(0.2)))
+                                }
+                            }
+                            .padding()
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
+                            .padding(.horizontal)
+                        }
 
                         if sourceVideoURL != nil {
                             // Settings
@@ -161,9 +195,36 @@ struct ContentView: View {
                     self.sourceVideoURL = video?.url
                     self.processedVideoURL = nil
                     self.errorMessage = nil
+                    if let url = video?.url {
+                        self.generateThumbnail(from: url)
+                    }
                 case .failure(let error):
                     self.errorMessage = "動画の読み込みに失敗: \(error.localizedDescription)"
                 }
+            }
+        }
+    }
+
+    private func generateThumbnail(from url: URL) {
+        Task {
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 200, height: 200)
+
+            let duration = try? await asset.load(.duration)
+            let seconds = duration.map { CMTimeGetSeconds($0) } ?? 0
+            let mins = Int(seconds) / 60
+            let secs = Int(seconds) % 60
+
+            var thumb: UIImage?
+            if let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) {
+                thumb = UIImage(cgImage: cgImage)
+            }
+
+            await MainActor.run {
+                self.thumbnail = thumb
+                self.videoDurationText = String(format: "%d:%02d", mins, secs)
             }
         }
     }
