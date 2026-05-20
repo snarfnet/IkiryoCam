@@ -71,25 +71,11 @@ final class GhostProcessor {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ikiryocam_\(UUID().uuidString).mov")
 
-        // Writer
+        // Writer (passthrough - no re-encoding)
         let writer = try AVAssetWriter(url: outputURL, fileType: .mov)
-        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: Int(videoSize.width),
-            AVVideoHeightKey: Int(videoSize.height),
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 5_000_000]
-        ])
+        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil)
         writerInput.expectsMediaDataInRealTime = false
         writer.add(writerInput)
-
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: writerInput,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: Int(videoSize.width),
-                kCVPixelBufferHeightKey as String: Int(videoSize.height),
-            ]
-        )
 
         // Audio
         let audioTracks = asset.tracks(withMediaType: .audio)
@@ -99,7 +85,6 @@ final class GhostProcessor {
         if let audioTrack = audioTracks.first {
             let ar = try AVAssetReader(asset: asset)
             let ao = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-            ao.alwaysCopiesSampleData = true
             ar.add(ao)
             let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
             ai.expectsMediaDataInRealTime = false
@@ -107,12 +92,9 @@ final class GhostProcessor {
             audioReader = ar; audioReaderOutput = ao; audioWriterInput = ai
         }
 
-        // Video reader
+        // Video reader (passthrough - no pixel format conversion)
         let reader = try AVAssetReader(asset: asset)
-        let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ])
-        readerOutput.alwaysCopiesSampleData = false
+        let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)
         reader.add(readerOutput)
 
         writer.startWriting()
@@ -121,43 +103,18 @@ final class GhostProcessor {
         audioReader?.startReading()
 
         var frameIndex = 0
-        let bounds = CGRect(origin: .zero, size: videoSize)
 
         while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
-            autoreleasepool {
-                guard reader.status == .reading, writer.status == .writing else { return }
+            // Wait for writer
+            while !writerInput.isReadyForMoreMediaData {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
 
-                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-                    frameIndex += 1
-                    return
-                }
+            writerInput.append(sampleBuffer)
 
-                // Wait for writer
-                var waitCount = 0
-                while !writerInput.isReadyForMoreMediaData && waitCount < 300 {
-                    Thread.sleep(forTimeInterval: 0.01)
-                    waitCount += 1
-                }
-                guard writerInput.isReadyForMoreMediaData else { frameIndex += 1; return }
-
-                // Just pass through original (diagnostic: no ghost effect)
-                let originalCI = CIImage(cvPixelBuffer: pixelBuffer)
-                    .transformed(by: corrTransform)
-                    .cropped(to: bounds)
-
-                // Write frame
-                guard let pool = adaptor.pixelBufferPool else { frameIndex += 1; return }
-                var outBuf: CVPixelBuffer?
-                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outBuf)
-                guard let out = outBuf else { frameIndex += 1; return }
-
-                ciContext.render(originalCI, to: out)
-                adaptor.append(out, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: timescale))
-
-                frameIndex += 1
-                if frameIndex % 5 == 0 {
-                    progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
-                }
+            frameIndex += 1
+            if frameIndex % 5 == 0 {
+                progress(min(0.95, Double(frameIndex) / Double(totalFrames)))
             }
         }
 
