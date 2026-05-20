@@ -112,7 +112,7 @@ final class GhostProcessor {
         let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ])
-        readerOutput.alwaysCopiesSampleData = true
+        readerOutput.alwaysCopiesSampleData = false
         reader.add(readerOutput)
 
         writer.startWriting()
@@ -120,8 +120,8 @@ final class GhostProcessor {
         reader.startReading()
         audioReader?.startReading()
 
-        // Delay buffer: retain reader pixel buffers directly (alwaysCopiesSampleData=true)
-        var delayRing: [CVPixelBuffer] = []
+        // Delay buffer: store CGImages (completely independent from reader's IOSurface pool)
+        var delayRing: [CGImage] = []
         var frameIndex = 0
 
         let bounds = CGRect(origin: .zero, size: videoSize)
@@ -147,11 +147,13 @@ final class GhostProcessor {
                     .transformed(by: corrTransform)
                     .cropped(to: bounds)
 
-                // Retain pixel buffer for delay ring (no copy needed, reader gives us a copy)
+                // Snapshot to CGImage for delay ring (decouples from reader's buffer pool)
                 if delayFrames > 0 {
-                    delayRing.append(pixelBuffer)
-                    if delayRing.count > delayFrames + 2 {
-                        delayRing.removeFirst()
+                    if let cgSnap = ciContext.createCGImage(originalCI, from: bounds) {
+                        delayRing.append(cgSnap)
+                        if delayRing.count > delayFrames + 2 {
+                            delayRing.removeFirst()
+                        }
                     }
                 }
 
@@ -159,9 +161,7 @@ final class GhostProcessor {
                 let ghostCI: CIImage
                 if delayFrames > 0 && delayRing.count > delayFrames {
                     let delayIdx = delayRing.count - 1 - delayFrames
-                    ghostCI = CIImage(cvPixelBuffer: delayRing[delayIdx])
-                        .transformed(by: corrTransform)
-                        .cropped(to: bounds)
+                    ghostCI = CIImage(cgImage: delayRing[delayIdx])
                 } else {
                     ghostCI = originalCI
                 }
