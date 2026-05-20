@@ -1,0 +1,63 @@
+name: IkiryoCam TestFlight Upload
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ikiryocam-testflight
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Select Xcode
+      run: |
+        XCODE_APP=$(ls /Applications/ | grep "^Xcode_" | sort -V | tail -1)
+        sudo xcode-select -s "/Applications/$XCODE_APP"
+        xcodebuild -version
+
+    - name: Install xcodegen
+      run: brew install xcodegen
+
+    - name: Set up ASC API Key
+      env:
+        ASC_API_KEY_CONTENT: ${{ secrets.ASC_API_KEY_CONTENT }}
+      run: |
+        mkdir -p ~/.appstoreconnect/private_keys
+        echo "$ASC_API_KEY_CONTENT" | base64 -D > ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8
+
+    - name: Generate Xcode project
+      run: xcodegen generate
+
+    - name: Set build number
+      run: |
+        BUILD_NUM=$(( ${{ github.run_number }} + 100 ))
+        echo "BUILD_NUM=$BUILD_NUM" >> $GITHUB_ENV
+
+    - name: Archive
+      run: |
+        xcodebuild archive \
+          -project IkiryoCam.xcodeproj -scheme IkiryoCam \
+          -configuration Release -destination "generic/platform=iOS" \
+          -archivePath build/IkiryoCam.xcarchive \
+          CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=83VGKGSQUH \
+          CURRENT_PROJECT_VERSION=$BUILD_NUM \
+          -allowProvisioningUpdates \
+          -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8 \
+          -authenticationKeyID WDXGY9WX55 \
+          -authenticationKeyIssuerID 2be0734f-943a-4d61-9dc9-5d9045c46fec
+
+    - name: Export and Upload
+      run: |
+        xcodebuild -exportArchive \
+          -archivePath build/IkiryoCam.xcarchive -exportPath build/export \
+          -exportOptionsPlist export_options.plist -allowProvisioningUpdates \
+          -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8 \
+          -authenticationKeyID WDXGY9WX55 \
+          -authenticationKeyIssuerID 2be0734f-943a-4d61-9dc9-5d9045c46fec
