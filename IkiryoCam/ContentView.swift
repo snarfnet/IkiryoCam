@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var spectralBoost = false
     @State private var faceApparition = false
     @State private var handApparition = false
+    @State private var maleApparition = false
 
     var body: some View {
         NavigationStack {
@@ -161,6 +162,7 @@ struct ContentView: View {
                             settingSummary(title: "霊圧強化", value: spectralBoost ? "ON" : "OFF")
                             settingSummary(title: "顔の気配", value: faceApparition ? "ON" : "OFF")
                             settingSummary(title: "手の気配", value: handApparition ? "ON" : "OFF")
+                            settingSummary(title: "男の気配", value: maleApparition ? "ON" : "OFF")
                         }
                     }
 
@@ -203,6 +205,7 @@ struct ContentView: View {
         spectralBoost = false
         faceApparition = false
         handApparition = false
+        maleApparition = false
     }
 
     private var importCard: some View {
@@ -324,6 +327,7 @@ struct ContentView: View {
                 triggerRow(icon: "flame", title: "霊圧強化", note: "残像とちらつきを強くする", isOn: $spectralBoost)
                 triggerRow(icon: "person.crop.circle.badge.exclamationmark", title: "顔の気配", note: "暗い顔のような影を浮かべる", isOn: $faceApparition)
                 triggerRow(icon: "hand.raised", title: "手の気配", note: "画面端に白い手形を浮かべる", isOn: $handApparition)
+                triggerRow(icon: "person.fill.viewfinder", title: "男の気配", note: "男性霊の顔を別に浮かべる", isOn: $maleApparition)
             }
         }
     }
@@ -478,7 +482,8 @@ struct ContentView: View {
             ghostTransparency: ghostTransparency,
             spectralBoost: spectralBoost,
             faceApparition: faceApparition,
-            handApparition: handApparition
+            handApparition: handApparition,
+            maleApparition: maleApparition
         )
 
         Task {
