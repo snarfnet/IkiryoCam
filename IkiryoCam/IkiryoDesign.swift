@@ -118,7 +118,11 @@ struct IkiryoPrimaryButton: ButtonStyle {
             .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(disabled ? Color.white.opacity(0.08) : IkiryoTheme.bloodGlow)
+                    .fill(
+                        disabled
+                            ? AnyShapeStyle(Color.white.opacity(0.08))
+                            : AnyShapeStyle(IkiryoTheme.bloodGlow)
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.white.opacity(disabled ? 0.08 : 0.24), lineWidth: 1)
