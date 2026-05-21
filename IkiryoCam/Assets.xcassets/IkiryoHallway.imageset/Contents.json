@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "ikiryo_hallway.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

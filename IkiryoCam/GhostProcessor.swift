@@ -61,7 +61,7 @@ final class GhostProcessor {
                 let bounds = CGRect(origin: .zero, size: request.renderSize)
                 let time = CMTimeGetSeconds(request.compositionTime)
 
-                // Ghost: offset + desaturate + blue tint + blur
+                // Ghost: offset + desaturate + cold tint + blur
                 let ghost = source
                     .transformed(by: CGAffineTransform(translationX: self.offsetX, y: -self.offsetY))
                     .applyingFilter("CIColorControls", parameters: [
@@ -94,7 +94,36 @@ final class GhostProcessor {
                     "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))
                 ])
 
-                let result = ghostAlpha.composited(over: source).cropped(to: bounds)
+                let motionAngle = atan2(Double(-self.offsetY), Double(max(abs(self.offsetX), 1.0)))
+                let trail = ghost
+                    .transformed(by: CGAffineTransform(translationX: self.offsetX * 0.65, y: -self.offsetY * 0.65))
+                    .applyingFilter("CIMotionBlur", parameters: [
+                        kCIInputRadiusKey: 18.0,
+                        kCIInputAngleKey: motionAngle
+                    ])
+                    .applyingFilter("CIColorMatrix", parameters: [
+                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity * 0.42))
+                    ])
+
+                let farTrail = ghost
+                    .transformed(by: CGAffineTransform(translationX: self.offsetX * -0.45, y: self.offsetY * 0.35))
+                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 14.0])
+                    .applyingFilter("CIColorMatrix", parameters: [
+                        "inputRVector": CIVector(x: 1.2, y: 0, z: 0, w: 0),
+                        "inputGVector": CIVector(x: 0, y: 0.3, z: 0, w: 0),
+                        "inputBVector": CIVector(x: 0, y: 0, z: 0.34, w: 0),
+                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity * 0.22))
+                    ])
+
+                let result = farTrail
+                    .composited(over: trail)
+                    .composited(over: ghostAlpha)
+                    .composited(over: source)
+                    .applyingFilter("CIVignette", parameters: [
+                        kCIInputIntensityKey: 0.72,
+                        kCIInputRadiusKey: min(bounds.width, bounds.height) * 0.82
+                    ])
+                    .cropped(to: bounds)
                 request.finish(with: result, context: nil)
             }
 

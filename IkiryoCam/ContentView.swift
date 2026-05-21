@@ -11,9 +11,8 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var showResult = false
     @State private var thumbnail: UIImage?
-    @State private var videoDurationText: String = ""
+    @State private var videoDurationText = ""
 
-    // Ghost settings
     @State private var offsetX: CGFloat = 30
     @State private var offsetY: CGFloat = 0
     @State private var ghostOpacity: Double = 0.35
@@ -21,136 +20,41 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                IkiryoBackground(pulse: isProcessing)
 
-                ScrollView {
-                    VStack(spacing: 24) {
-                        // Title
-                        VStack(spacing: 4) {
-                            Text("生霊カメラ")
-                                .font(.system(size: 36, weight: .thin))
-                                .foregroundColor(.white)
-                            Text("IkiryoCam")
-                                .font(.system(size: 14, weight: .light, design: .monospaced))
-                                .foregroundColor(.gray)
-                        }
-                        .padding(.top, 20)
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 18) {
+                        header
 
-                        // Video picker
-                        PhotosPicker(selection: $selectedItem, matching: .videos) {
-                            VStack(spacing: 12) {
-                                Image(systemName: "film.stack")
-                                    .font(.system(size: 48))
-                                    .foregroundColor(.white.opacity(0.6))
-                                Text("動画を選択")
-                                    .font(.headline)
-                                    .foregroundColor(.white.opacity(0.8))
-                                Text("カメラロールから人物が映った動画を選んでください")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 180)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color.white.opacity(0.05))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
-                                            .strokeBorder(Color.white.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [8]))
-                                    )
-                            )
-                        }
-                        .padding(.horizontal)
-
-                        // Video preview
-                        if let thumb = thumbnail {
-                            HStack(spacing: 12) {
-                                Image(uiImage: thumb)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 80, height: 60)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("選択済み")
-                                        .font(.caption)
-                                        .foregroundColor(.purple)
-                                    Text(videoDurationText)
-                                        .font(.caption)
-                                        .foregroundColor(.gray)
-                                }
-                                Spacer()
-                                PhotosPicker(selection: $selectedItem, matching: .videos) {
-                                    Text("変更")
-                                        .font(.caption)
-                                        .foregroundColor(.purple)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(Capsule().fill(Color.purple.opacity(0.2)))
-                                }
-                            }
-                            .padding()
-                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
-                            .padding(.horizontal)
+                        if let thumbnail {
+                            selectedVideoCard(thumbnail)
+                        } else {
+                            importCard
                         }
 
                         if sourceVideoURL != nil {
-                            // Settings
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("生霊の設定")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-
-                                settingRow(title: "横ずれ", value: $offsetX, range: -100...100, unit: "px")
-                                settingRow(title: "縦ずれ", value: $offsetY, range: -100...100, unit: "px")
-                                settingRow(title: "透明度", value: $ghostOpacity, range: 0.1...0.7, unit: "")
-                            }
-                            .padding()
-                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
-                            .padding(.horizontal)
-
-                            // Process button
-                            Button {
-                                processVideo()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "person.fill.questionmark")
-                                    Text("生霊を生成")
-                                        .fontWeight(.semibold)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color.purple.opacity(0.7))
-                                )
-                                .foregroundColor(.white)
-                            }
-                            .disabled(isProcessing)
-                            .padding(.horizontal)
+                            effectEditor
+                            processButton
                         }
 
                         if isProcessing {
-                            VStack(spacing: 8) {
-                                ProgressView(value: progress)
-                                    .tint(.purple)
-                                Text("生霊を召喚中... \(Int(progress * 100))%")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            .padding(.horizontal)
+                            processingCard
                         }
 
-                        if let error = errorMessage {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundColor(.red)
-                                .padding(.horizontal)
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(IkiryoTheme.warning)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
                         }
                     }
-                    .padding(.bottom, 40)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 22)
+                    .padding(.bottom, 38)
                 }
             }
+            .navigationBarHidden(true)
             .onChange(of: selectedItem) { _, newItem in
                 loadVideo(from: newItem)
             }
@@ -162,26 +66,231 @@ struct ContentView: View {
         }
     }
 
-    private func settingRow(title: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String) -> some View {
-        HStack {
-            Text(title)
-                .foregroundColor(.white.opacity(0.7))
-                .frame(width: 60, alignment: .leading)
-            Slider(value: value, in: range)
-                .tint(.purple)
-            Text("\(Int(value.wrappedValue))\(unit)")
-                .foregroundColor(.white.opacity(0.5))
-                .frame(width: 50, alignment: .trailing)
-                .font(.caption.monospacedDigit())
+    private var header: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Spacer()
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(IkiryoTheme.bone.opacity(0.78))
+            }
+
+            Text("生霊カメラ")
+                .font(.system(size: 42, weight: .black, design: .serif))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.white, IkiryoTheme.bone, IkiryoTheme.warning.opacity(0.86)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .shadow(color: IkiryoTheme.warning.opacity(0.38), radius: 14)
+                .shadow(color: .black, radius: 2, y: 2)
+
+            Text("動画に潜む気配を映し出す")
+                .font(.system(.subheadline, design: .serif).weight(.medium))
+                .foregroundStyle(IkiryoTheme.bone.opacity(0.78))
+
+            Rectangle()
+                .fill(IkiryoTheme.warning.opacity(0.55))
+                .frame(width: 132, height: 1)
+                .blur(radius: 0.2)
         }
     }
 
-    private func settingRow(title: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>, unit: String) -> some View {
+    private var importCard: some View {
+        PhotosPicker(selection: $selectedItem, matching: .videos) {
+            IkiryoPanel {
+                VStack(spacing: 18) {
+                    ZStack {
+                        Image("IkiryoHallway")
+                            .resizable()
+                            .scaledToFill()
+                            .frame(height: 210)
+                            .clipShape(Rectangle())
+                            .overlay(Color.black.opacity(0.18))
+                            .overlay(ScanlineOverlay().opacity(0.28))
+                            .clipped()
+
+                        Rectangle()
+                            .stroke(IkiryoTheme.bone.opacity(0.8), lineWidth: 1)
+                            .padding(13)
+
+                        Image(systemName: "figure.walk.motion")
+                            .font(.system(size: 48, weight: .thin))
+                            .foregroundStyle(IkiryoTheme.bone.opacity(0.72))
+                            .shadow(color: IkiryoTheme.sickGreen.opacity(0.5), radius: 16)
+                    }
+
+                    Text("動画をインポート")
+                        .font(.system(.title3, design: .serif).weight(.black))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(IkiryoTheme.oldBlood.opacity(0.86))
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(IkiryoTheme.warning.opacity(0.72), lineWidth: 1))
+                                .shadow(color: IkiryoTheme.warning.opacity(0.42), radius: 18)
+                        )
+
+                    Text("対応形式: MP4 / MOV")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(IkiryoTheme.ash)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func selectedVideoCard(_ thumb: UIImage) -> some View {
+        IkiryoPanel {
+            VStack(spacing: 14) {
+                ZStack(alignment: .bottomLeading) {
+                    Image(uiImage: thumb)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(height: 205)
+                        .clipShape(Rectangle())
+                        .overlay(Color.black.opacity(0.18))
+                        .overlay(ScanlineOverlay().opacity(0.24))
+                        .clipped()
+
+                    Rectangle()
+                        .stroke(IkiryoTheme.bone.opacity(0.58), lineWidth: 1)
+                        .padding(10)
+
+                    HStack {
+                        Label(videoDurationText, systemImage: "film")
+                        Spacer()
+                        Text("解析待機")
+                    }
+                    .font(.caption.monospaced().weight(.semibold))
+                    .foregroundStyle(IkiryoTheme.bone)
+                    .padding(12)
+                    .background(LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("選択済み")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(IkiryoTheme.warning)
+                        Text("この動画に生霊の残像を重ねます")
+                            .font(.caption)
+                            .foregroundStyle(IkiryoTheme.ash)
+                    }
+
+                    Spacer()
+
+                    PhotosPicker(selection: $selectedItem, matching: .videos) {
+                        Label("変更", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(IkiryoTheme.bone)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var effectEditor: some View {
+        IkiryoPanel {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("エフェクト編集")
+                        .font(.system(.headline, design: .serif).weight(.black))
+                        .foregroundStyle(IkiryoTheme.bone)
+                    Spacer()
+                    Button("リセット") {
+                        offsetX = 30
+                        offsetY = 0
+                        ghostOpacity = 0.35
+                    }
+                    .font(.caption.monospaced().weight(.bold))
+                    .foregroundStyle(IkiryoTheme.ash)
+                }
+
+                settingRow(icon: "figure.wave", title: "生霊の強さ", value: $ghostOpacity, range: 0.1...0.7, displayMultiplier: 100)
+                settingRow(icon: "arrow.left.and.right", title: "横のずれ", value: $offsetX, range: -100...100, suffix: "px")
+                settingRow(icon: "arrow.up.and.down", title: "縦のずれ", value: $offsetY, range: -100...100, suffix: "px")
+            }
+        }
+    }
+
+    private var processButton: some View {
+        Button {
+            processVideo()
+        } label: {
+            Label("生霊を生成する", systemImage: "eye.trianglebadge.exclamationmark")
+        }
+        .buttonStyle(IkiryoPrimaryButton(disabled: isProcessing))
+        .disabled(isProcessing)
+    }
+
+    private var processingCard: some View {
+        IkiryoPanel {
+            VStack(spacing: 11) {
+                ProgressView(value: progress)
+                    .tint(IkiryoTheme.warning)
+                Text("霊像を焼き込み中... \(Int(progress * 100))%")
+                    .font(.caption.monospaced().weight(.bold))
+                    .foregroundStyle(IkiryoTheme.bone.opacity(0.82))
+            }
+        }
+    }
+
+    private func settingRow(
+        icon: String,
+        title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        suffix: String = "",
+        displayMultiplier: Double = 1
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(IkiryoTheme.bone)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Color.white.opacity(0.08)))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(IkiryoTheme.bone.opacity(0.9))
+                Slider(value: value, in: range)
+                    .tint(IkiryoTheme.warning)
+            }
+
+            Text("\(Int(value.wrappedValue * displayMultiplier))\(suffix)")
+                .font(.caption.monospacedDigit().weight(.bold))
+                .foregroundStyle(IkiryoTheme.bone)
+                .frame(width: 52, alignment: .trailing)
+        }
+    }
+
+    private func settingRow(
+        icon: String,
+        title: String,
+        value: Binding<CGFloat>,
+        range: ClosedRange<CGFloat>,
+        suffix: String = ""
+    ) -> some View {
         let doubleBinding = Binding<Double>(
             get: { Double(value.wrappedValue) },
             set: { value.wrappedValue = CGFloat($0) }
         )
-        return settingRow(title: title, value: doubleBinding, range: Double(range.lowerBound)...Double(range.upperBound), unit: unit)
+        return settingRow(
+            icon: icon,
+            title: title,
+            value: doubleBinding,
+            range: Double(range.lowerBound)...Double(range.upperBound),
+            suffix: suffix
+        )
     }
 
     private func loadVideo(from item: PhotosPickerItem?) {
@@ -190,14 +299,14 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let video):
-                    self.sourceVideoURL = video?.url
-                    self.processedVideoURL = nil
-                    self.errorMessage = nil
+                    sourceVideoURL = video?.url
+                    processedVideoURL = nil
+                    errorMessage = nil
                     if let url = video?.url {
-                        self.generateThumbnail(from: url)
+                        generateThumbnail(from: url)
                     }
                 case .failure(let error):
-                    self.errorMessage = "動画の読み込みに失敗: \(error.localizedDescription)"
+                    errorMessage = "動画の読み込みに失敗しました: \(error.localizedDescription)"
                 }
             }
         }
@@ -208,7 +317,7 @@ struct ContentView: View {
             let asset = AVURLAsset(url: url)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 200, height: 200)
+            generator.maximumSize = CGSize(width: 640, height: 640)
 
             let duration = try? await asset.load(.duration)
             let seconds = duration.map { CMTimeGetSeconds($0) } ?? 0
@@ -221,8 +330,8 @@ struct ContentView: View {
             }
 
             await MainActor.run {
-                self.thumbnail = thumb
-                self.videoDurationText = String(format: "%d:%02d", mins, secs)
+                thumbnail = thumb
+                videoDurationText = String(format: "%d:%02d", mins, secs)
             }
         }
     }
@@ -242,17 +351,17 @@ struct ContentView: View {
         Task {
             do {
                 let outputURL = try await processor.process(videoURL: url) { p in
-                    DispatchQueue.main.async { self.progress = p }
+                    DispatchQueue.main.async { progress = p }
                 }
                 DispatchQueue.main.async {
-                    self.processedVideoURL = outputURL
-                    self.isProcessing = false
-                    self.showResult = true
+                    processedVideoURL = outputURL
+                    isProcessing = false
+                    showResult = true
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self.errorMessage = "処理失敗: \(error.localizedDescription)"
-                    self.isProcessing = false
+                    errorMessage = "処理に失敗しました: \(error.localizedDescription)"
+                    isProcessing = false
                 }
             }
         }
