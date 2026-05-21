@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var showResult = false
     @State private var thumbnail: UIImage?
     @State private var videoDurationText = ""
+    @State private var showSettings = false
 
     @State private var offsetX: CGFloat = 30
     @State private var offsetY: CGFloat = 0
@@ -19,6 +20,7 @@ struct ContentView: View {
     @State private var ghostTransparency: Double = 0.45
     @State private var spectralBoost = false
     @State private var faceApparition = false
+    @State private var handApparition = false
 
     var body: some View {
         NavigationStack {
@@ -66,6 +68,9 @@ struct ContentView: View {
                     ResultView(videoURL: url)
                 }
             }
+            .sheet(isPresented: $showSettings) {
+                settingsSheet
+            }
         }
     }
 
@@ -73,9 +78,17 @@ struct ContentView: View {
         VStack(spacing: 10) {
             HStack {
                 Spacer()
-                Image(systemName: "gearshape")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(IkiryoTheme.bone.opacity(0.78))
+                Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(IkiryoTheme.bone.opacity(0.86))
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.34)))
+                        .overlay(Circle().stroke(IkiryoTheme.bone.opacity(0.18), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
             }
 
             Text("生霊カメラ")
@@ -99,6 +112,97 @@ struct ContentView: View {
                 .frame(width: 132, height: 1)
                 .blur(radius: 0.2)
         }
+    }
+
+    private var settingsSheet: some View {
+        NavigationStack {
+            ZStack {
+                IkiryoTheme.void.ignoresSafeArea()
+                ScanlineOverlay()
+                    .opacity(0.12)
+                    .ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: 18) {
+                    IkiryoPanel {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("設定")
+                                .font(.system(.title2, design: .serif).weight(.black))
+                                .foregroundStyle(IkiryoTheme.bone)
+
+                            Button {
+                                resetEffects()
+                            } label: {
+                                Label("エフェクトを初期値に戻す", systemImage: "arrow.counterclockwise")
+                                    .font(.headline.weight(.bold))
+                                    .foregroundStyle(IkiryoTheme.bone)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.white.opacity(0.08))
+                                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(IkiryoTheme.bone.opacity(0.18), lineWidth: 1))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+
+                            Text("エフェクトの細かい調整は、動画を選択したあとに表示されます。")
+                                .font(.caption)
+                                .foregroundStyle(IkiryoTheme.ash)
+                        }
+                    }
+
+                    IkiryoPanel {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("現在の設定")
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(IkiryoTheme.bone)
+                            settingSummary(title: "生霊の強さ", value: "\(Int(ghostOpacity * 100))")
+                            settingSummary(title: "透明感", value: "\(Int(ghostTransparency * 100))")
+                            settingSummary(title: "霊圧強化", value: spectralBoost ? "ON" : "OFF")
+                            settingSummary(title: "顔の気配", value: faceApparition ? "ON" : "OFF")
+                            settingSummary(title: "手の気配", value: handApparition ? "ON" : "OFF")
+                        }
+                    }
+
+                    Spacer()
+                }
+                .padding(18)
+            }
+            .navigationTitle("生霊カメラ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") {
+                        showSettings = false
+                    }
+                    .foregroundStyle(IkiryoTheme.bone)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .preferredColorScheme(.dark)
+    }
+
+    private func settingSummary(title: String, value: String) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(IkiryoTheme.ash)
+            Spacer()
+            Text(value)
+                .font(.caption.monospacedDigit().weight(.bold))
+                .foregroundStyle(IkiryoTheme.warning)
+        }
+        .font(.caption)
+    }
+
+    private func resetEffects() {
+        offsetX = 30
+        offsetY = 0
+        ghostOpacity = 0.7
+        ghostTransparency = 0.45
+        spectralBoost = false
+        faceApparition = false
+        handApparition = false
     }
 
     private var importCard: some View {
@@ -209,12 +313,7 @@ struct ContentView: View {
                         .foregroundStyle(IkiryoTheme.bone)
                     Spacer()
                     Button("リセット") {
-                        offsetX = 30
-                        offsetY = 0
-                        ghostOpacity = 0.7
-                        ghostTransparency = 0.45
-                        spectralBoost = false
-                        faceApparition = false
+                        resetEffects()
                     }
                     .font(.caption.monospaced().weight(.bold))
                     .foregroundStyle(IkiryoTheme.ash)
@@ -226,6 +325,7 @@ struct ContentView: View {
                 settingRow(icon: "arrow.up.and.down", title: "縦のずれ", value: $offsetY, range: -100...100, suffix: "px")
                 triggerRow(icon: "flame", title: "霊圧強化", note: "残像とちらつきを強くする", isOn: $spectralBoost)
                 triggerRow(icon: "person.crop.circle.badge.exclamationmark", title: "顔の気配", note: "暗い顔のような影を浮かべる", isOn: $faceApparition)
+                triggerRow(icon: "hand.raised", title: "手の気配", note: "画面端に白い手形を浮かべる", isOn: $handApparition)
             }
         }
     }
@@ -379,7 +479,8 @@ struct ContentView: View {
             ghostOpacity: ghostOpacity,
             ghostTransparency: ghostTransparency,
             spectralBoost: spectralBoost,
-            faceApparition: faceApparition
+            faceApparition: faceApparition,
+            handApparition: handApparition
         )
 
         Task {
