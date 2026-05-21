@@ -200,44 +200,53 @@ final class GhostProcessor {
 
     private func apparitionFace(bounds: CGRect, time: Double, opacity: Double) -> CIImage {
         let center = CGPoint(
-            x: bounds.midX + bounds.width * 0.08 * sin(time * 0.7),
-            y: bounds.midY - bounds.height * 0.16 + bounds.height * 0.025 * cos(time * 0.9)
+            x: bounds.midX + bounds.width * 0.06 * sin(time * 0.7),
+            y: bounds.midY - bounds.height * 0.1 + bounds.height * 0.02 * cos(time * 0.9)
         )
-        let radius = min(bounds.width, bounds.height) * 0.23
-        let alpha = CGFloat(min(max(opacity * 0.78, 0.16), 0.68))
+        let radius = min(bounds.width, bounds.height) * 0.31
+        let alpha = CGFloat(min(max(opacity * 0.92, 0.22), 0.78))
 
         let face = radialLayer(
             center: center,
-            radius0: radius * 0.16,
-            radius1: radius,
+            radius0: radius * 0.14,
+            radius1: radius * 0.94,
             color0: CIColor(red: 0.82, green: 0.96, blue: 1.0, alpha: alpha),
-            color1: CIColor(red: 0.1, green: 0.16, blue: 0.18, alpha: 0),
+            color1: CIColor(red: 0.1, green: 0.16, blue: 0.18, alpha: 0.02),
+            bounds: bounds
+        )
+
+        let hair = radialLayer(
+            center: CGPoint(x: center.x, y: center.y + radius * 0.08),
+            radius0: radius * 0.24,
+            radius1: radius * 0.98,
+            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: alpha * 0.34),
+            color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
             bounds: bounds
         )
 
         let forehead = radialLayer(
-            center: CGPoint(x: center.x, y: center.y + radius * 0.36),
-            radius0: radius * 0.08,
-            radius1: radius * 0.36,
+            center: CGPoint(x: center.x, y: center.y + radius * 0.34),
+            radius0: radius * 0.1,
+            radius1: radius * 0.42,
             color0: CIColor(red: 0.9, green: 1.0, blue: 1.0, alpha: alpha * 0.45),
             color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
             bounds: bounds
         )
 
         let leftEye = radialLayer(
-            center: CGPoint(x: center.x - radius * 0.28, y: center.y + radius * 0.12),
-            radius0: radius * 0.055,
-            radius1: radius * 0.21,
-            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: min(alpha * 1.65, 0.9)),
+            center: CGPoint(x: center.x - radius * 0.24, y: center.y + radius * 0.1),
+            radius0: radius * 0.06,
+            radius1: radius * 0.2,
+            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: min(alpha * 1.85, 0.95)),
             color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
             bounds: bounds
         )
 
         let rightEye = radialLayer(
-            center: CGPoint(x: center.x + radius * 0.28, y: center.y + radius * 0.12),
-            radius0: radius * 0.055,
-            radius1: radius * 0.21,
-            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: min(alpha * 1.65, 0.9)),
+            center: CGPoint(x: center.x + radius * 0.24, y: center.y + radius * 0.1),
+            radius0: radius * 0.06,
+            radius1: radius * 0.2,
+            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: min(alpha * 1.85, 0.95)),
             color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
             bounds: bounds
         )
@@ -245,17 +254,17 @@ final class GhostProcessor {
         let noseShadow = radialLayer(
             center: CGPoint(x: center.x, y: center.y - radius * 0.06),
             radius0: radius * 0.035,
-            radius1: radius * 0.16,
+            radius1: radius * 0.18,
             color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: alpha * 0.62),
             color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
             bounds: bounds
         )
 
         let mouth = radialLayer(
-            center: CGPoint(x: center.x, y: center.y - radius * 0.34),
-            radius0: radius * 0.065,
-            radius1: radius * 0.24,
-            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: min(alpha * 1.2, 0.78)),
+            center: CGPoint(x: center.x, y: center.y - radius * 0.32),
+            radius0: radius * 0.075,
+            radius1: radius * 0.26,
+            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: min(alpha * 1.35, 0.86)),
             color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
             bounds: bounds
         )
@@ -266,34 +275,35 @@ final class GhostProcessor {
             .composited(over: leftEye)
             .composited(over: forehead)
             .composited(over: face)
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius * 0.032])
+            .composited(over: hair)
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius * 0.024])
             .cropped(to: bounds)
     }
 
     private func apparitionHand(bounds: CGRect, time: Double, opacity: Double) -> CIImage {
         let side: CGFloat = sin(time * 0.45) > 0 ? 1 : -1
         let palmCenter = CGPoint(
-            x: bounds.midX + side * bounds.width * 0.32 + bounds.width * 0.025 * sin(time * 0.9),
-            y: bounds.midY - bounds.height * 0.2 + bounds.height * 0.035 * cos(time * 0.8)
+            x: bounds.midX + side * bounds.width * 0.26 + bounds.width * 0.025 * sin(time * 0.9),
+            y: bounds.midY - bounds.height * 0.14 + bounds.height * 0.035 * cos(time * 0.8)
         )
-        let radius = min(bounds.width, bounds.height) * 0.105
-        let alpha = CGFloat(min(max(opacity * 0.74, 0.14), 0.58))
+        let radius = min(bounds.width, bounds.height) * 0.17
+        let alpha = CGFloat(min(max(opacity * 0.88, 0.2), 0.72))
 
         var hand = radialLayer(
             center: palmCenter,
-            radius0: radius * 0.24,
-            radius1: radius * 1.05,
+            radius0: radius * 0.2,
+            radius1: radius * 0.95,
             color0: CIColor(red: 0.84, green: 0.96, blue: 1.0, alpha: alpha),
             color1: CIColor(red: 0.05, green: 0.08, blue: 0.09, alpha: 0),
             bounds: bounds
         )
 
         let fingerOffsets: [(CGFloat, CGFloat, CGFloat)] = [
-            (-0.5, 0.92, 0.82),
-            (-0.18, 1.16, 1.0),
-            (0.14, 1.12, 0.96),
-            (0.45, 0.92, 0.78),
-            (0.78 * side, 0.36, 0.64)
+            (-0.52, 1.02, 0.9),
+            (-0.18, 1.38, 1.16),
+            (0.16, 1.34, 1.08),
+            (0.5, 1.06, 0.88),
+            (0.84 * side, 0.42, 0.76)
         ]
 
         for (xOffset, yOffset, scale) in fingerOffsets {
@@ -301,9 +311,9 @@ final class GhostProcessor {
             let y = palmCenter.y + radius * yOffset
             let finger = radialLayer(
                 center: CGPoint(x: x, y: y),
-                radius0: radius * 0.12,
-                radius1: radius * 0.42 * scale,
-                color0: CIColor(red: 0.88, green: 0.98, blue: 1.0, alpha: alpha * 0.92),
+                radius0: radius * 0.11,
+                radius1: radius * 0.52 * scale,
+                color0: CIColor(red: 0.88, green: 0.98, blue: 1.0, alpha: alpha),
                 color1: CIColor(red: 0.02, green: 0.04, blue: 0.05, alpha: 0),
                 bounds: bounds
             )
@@ -311,10 +321,10 @@ final class GhostProcessor {
         }
 
         let wrist = radialLayer(
-            center: CGPoint(x: palmCenter.x - side * radius * 0.08, y: palmCenter.y - radius * 0.78),
-            radius0: radius * 0.16,
-            radius1: radius * 0.6,
-            color0: CIColor(red: 0.76, green: 0.92, blue: 0.98, alpha: alpha * 0.5),
+            center: CGPoint(x: palmCenter.x - side * radius * 0.06, y: palmCenter.y - radius * 0.7),
+            radius0: radius * 0.18,
+            radius1: radius * 0.76,
+            color0: CIColor(red: 0.76, green: 0.92, blue: 0.98, alpha: alpha * 0.58),
             color1: CIColor(red: 0.02, green: 0.04, blue: 0.05, alpha: 0),
             bounds: bounds
         )
@@ -322,10 +332,10 @@ final class GhostProcessor {
         return wrist
             .composited(over: hand)
             .applyingFilter("CIMotionBlur", parameters: [
-                kCIInputRadiusKey: radius * 0.24,
+                kCIInputRadiusKey: radius * 0.16,
                 kCIInputAngleKey: side > 0 ? Double.pi * 0.02 : Double.pi * 0.98
             ])
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius * 0.035])
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius * 0.026])
             .cropped(to: bounds)
     }
 

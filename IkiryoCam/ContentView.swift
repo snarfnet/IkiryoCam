@@ -223,10 +223,8 @@ struct ContentView: View {
                             .stroke(IkiryoTheme.bone.opacity(0.8), lineWidth: 1)
                             .padding(13)
 
-                        Image(systemName: "figure.walk.motion")
-                            .font(.system(size: 48, weight: .thin))
-                            .foregroundStyle(IkiryoTheme.bone.opacity(0.72))
-                            .shadow(color: IkiryoTheme.sickGreen.opacity(0.5), radius: 16)
+                        ImportApparitionMark()
+                            .frame(width: 118, height: 150)
                     }
 
                     Text("動画をインポート")
@@ -516,5 +514,88 @@ struct VideoTransferable: Transferable {
             try FileManager.default.copyItem(at: received.file, to: dest)
             return Self(url: dest)
         }
+    }
+}
+
+private struct ImportApparitionMark: View {
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+
+            ZStack {
+                Ellipse()
+                    .fill(IkiryoTheme.sickGreen.opacity(0.12))
+                    .frame(width: 92, height: 132)
+                    .blur(radius: 18)
+
+                VStack(spacing: 0) {
+                    Circle()
+                        .fill(IkiryoTheme.bone.opacity(0.72))
+                        .frame(width: 32, height: 38)
+                        .blur(radius: 2.4)
+                        .offset(y: 4)
+
+                    ZStack {
+                        Ellipse()
+                            .fill(IkiryoTheme.bone.opacity(0.5))
+                            .frame(width: 54, height: 86)
+                            .blur(radius: 3.4)
+
+                        HStack(spacing: 28) {
+                            Capsule()
+                                .fill(IkiryoTheme.bone.opacity(0.34))
+                                .frame(width: 13, height: 78)
+                                .rotationEffect(.degrees(-12))
+                            Capsule()
+                                .fill(IkiryoTheme.bone.opacity(0.34))
+                                .frame(width: 13, height: 78)
+                                .rotationEffect(.degrees(12))
+                        }
+                        .offset(y: 16)
+                        .blur(radius: 2.2)
+
+                        VStack(spacing: 9) {
+                            HStack(spacing: 16) {
+                                Circle().fill(Color.black.opacity(0.42)).frame(width: 6, height: 8)
+                                Circle().fill(Color.black.opacity(0.42)).frame(width: 6, height: 8)
+                            }
+                            Capsule()
+                                .fill(Color.black.opacity(0.34))
+                                .frame(width: 16, height: 4)
+                        }
+                        .offset(y: -38)
+                        .blur(radius: 0.6)
+                    }
+
+                    HStack(spacing: 18) {
+                        Capsule()
+                            .fill(IkiryoTheme.bone.opacity(0.28))
+                            .frame(width: 14, height: 56)
+                            .rotationEffect(.degrees(8))
+                        Capsule()
+                            .fill(IkiryoTheme.bone.opacity(0.28))
+                            .frame(width: 14, height: 56)
+                            .rotationEffect(.degrees(-8))
+                    }
+                    .offset(y: -12)
+                    .blur(radius: 2.6)
+                }
+                .offset(x: 3 * sin(t * 1.2), y: 2 * cos(t * 1.6))
+                .shadow(color: IkiryoTheme.sickGreen.opacity(0.75), radius: 18)
+
+                ForEach(0..<4, id: \.self) { index in
+                    Capsule()
+                        .fill(IkiryoTheme.bone.opacity(0.08))
+                        .frame(width: 8, height: 82)
+                        .rotationEffect(.degrees(Double(index) * 13 - 18))
+                        .offset(
+                            x: CGFloat(index - 2) * 18 + CGFloat(sin(t + Double(index))) * 8,
+                            y: 14 + CGFloat(cos(t * 0.9 + Double(index))) * 5
+                        )
+                        .blur(radius: 5)
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
