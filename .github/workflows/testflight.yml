@@ -47,6 +47,7 @@ jobs:
           -configuration Release -destination "generic/platform=iOS" \
           -archivePath build/IkiryoCam.xcarchive \
           CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=83VGKGSQUH \
+          CODE_SIGN_IDENTITY="Apple Distribution" \
           CURRENT_PROJECT_VERSION=$BUILD_NUM \
           -allowProvisioningUpdates \
           -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8 \
