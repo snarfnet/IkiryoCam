@@ -6,11 +6,24 @@ final class GhostProcessor {
     let offsetX: CGFloat
     let offsetY: CGFloat
     let ghostOpacity: Double
+    let ghostTransparency: Double
+    let spectralBoost: Bool
+    let faceApparition: Bool
 
-    init(offsetX: CGFloat, offsetY: CGFloat, ghostOpacity: Double) {
+    init(
+        offsetX: CGFloat,
+        offsetY: CGFloat,
+        ghostOpacity: Double,
+        ghostTransparency: Double,
+        spectralBoost: Bool,
+        faceApparition: Bool
+    ) {
         self.offsetX = offsetX
         self.offsetY = offsetY
         self.ghostOpacity = ghostOpacity
+        self.ghostTransparency = ghostTransparency
+        self.spectralBoost = spectralBoost
+        self.faceApparition = faceApparition
     }
 
     /// Max output dimension to prevent memory issues on large videos
@@ -78,7 +91,10 @@ final class GhostProcessor {
                     .applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: 8.0])
 
                 // Fade in/out
-                var opacity = self.ghostOpacity
+                let boost = self.spectralBoost ? 1.35 : 1.0
+                let transparency = min(max(self.ghostTransparency, 0), 1)
+                var opacity = min(self.ghostOpacity * boost, 1.15)
+                opacity *= 1.0 - transparency * 0.42
                 if time < fadeSeconds {
                     let t = time / fadeSeconds
                     opacity *= t * t * (3 - 2 * t)
@@ -88,9 +104,16 @@ final class GhostProcessor {
                 }
 
                 // Flicker (more visible)
-                opacity *= 0.65 + 0.35 * sin(time * 11) * cos(time * 4.3)
+                let flickerDepth = self.spectralBoost ? 0.52 : 0.35
+                opacity *= (1.0 - flickerDepth) + flickerDepth * sin(time * 11) * cos(time * 4.3)
+                opacity = min(max(opacity, 0), 1.0)
 
-                let ghostAlpha = ghost.applyingFilter("CIColorMatrix", parameters: [
+                let ghostAlpha = ghost
+                    .applyingFilter("CIBloom", parameters: [
+                        kCIInputRadiusKey: 5.0 + transparency * 12.0,
+                        kCIInputIntensityKey: 0.22 + transparency * 0.5
+                    ])
+                    .applyingFilter("CIColorMatrix", parameters: [
                     "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))
                 ])
 
@@ -98,26 +121,31 @@ final class GhostProcessor {
                 let trail = ghost
                     .transformed(by: CGAffineTransform(translationX: self.offsetX * 0.65, y: -self.offsetY * 0.65))
                     .applyingFilter("CIMotionBlur", parameters: [
-                        kCIInputRadiusKey: 18.0,
+                        kCIInputRadiusKey: self.spectralBoost ? 30.0 : 18.0,
                         kCIInputAngleKey: motionAngle
                     ])
                     .applyingFilter("CIColorMatrix", parameters: [
-                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity * 0.42))
+                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity * (self.spectralBoost ? 0.62 : 0.42)))
                     ])
 
                 let farTrail = ghost
-                    .transformed(by: CGAffineTransform(translationX: self.offsetX * -0.45, y: self.offsetY * 0.35))
-                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 14.0])
+                    .transformed(by: CGAffineTransform(translationX: self.offsetX * -0.55, y: self.offsetY * 0.4))
+                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: self.spectralBoost ? 22.0 : 14.0])
                     .applyingFilter("CIColorMatrix", parameters: [
                         "inputRVector": CIVector(x: 1.2, y: 0, z: 0, w: 0),
                         "inputGVector": CIVector(x: 0, y: 0.3, z: 0, w: 0),
                         "inputBVector": CIVector(x: 0, y: 0, z: 0.34, w: 0),
-                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity * 0.22))
+                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity * (self.spectralBoost ? 0.36 : 0.22)))
                     ])
+
+                let faceLayer = self.faceApparition
+                    ? self.apparitionFace(bounds: bounds, time: time, opacity: opacity)
+                    : CIImage.empty().cropped(to: bounds)
 
                 let result = farTrail
                     .composited(over: trail)
                     .composited(over: ghostAlpha)
+                    .composited(over: faceLayer)
                     .composited(over: source)
                     .applyingFilter("CIVignette", parameters: [
                         kCIInputIntensityKey: 0.72,
@@ -161,6 +189,78 @@ final class GhostProcessor {
     private func appliedSize(naturalSize: CGSize, transform: CGAffineTransform) -> CGSize {
         let r = CGRect(origin: .zero, size: naturalSize).applying(transform)
         return CGSize(width: abs(r.width), height: abs(r.height))
+    }
+
+    private func apparitionFace(bounds: CGRect, time: Double, opacity: Double) -> CIImage {
+        let center = CGPoint(
+            x: bounds.midX + bounds.width * 0.12 * sin(time * 0.7),
+            y: bounds.midY - bounds.height * 0.23 + bounds.height * 0.03 * cos(time * 0.9)
+        )
+        let radius = min(bounds.width, bounds.height) * 0.18
+        let alpha = CGFloat(min(max(opacity * 0.52, 0.05), 0.42))
+
+        let face = radialLayer(
+            center: center,
+            radius0: radius * 0.18,
+            radius1: radius,
+            color0: CIColor(red: 0.75, green: 0.92, blue: 1.0, alpha: alpha),
+            color1: CIColor(red: 0.1, green: 0.16, blue: 0.18, alpha: 0),
+            bounds: bounds
+        )
+
+        let leftEye = radialLayer(
+            center: CGPoint(x: center.x - radius * 0.28, y: center.y + radius * 0.12),
+            radius0: radius * 0.04,
+            radius1: radius * 0.18,
+            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: alpha * 1.25),
+            color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
+            bounds: bounds
+        )
+
+        let rightEye = radialLayer(
+            center: CGPoint(x: center.x + radius * 0.28, y: center.y + radius * 0.12),
+            radius0: radius * 0.04,
+            radius1: radius * 0.18,
+            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: alpha * 1.25),
+            color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
+            bounds: bounds
+        )
+
+        let mouth = radialLayer(
+            center: CGPoint(x: center.x, y: center.y - radius * 0.28),
+            radius0: radius * 0.05,
+            radius1: radius * 0.2,
+            color0: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: alpha),
+            color1: CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0),
+            bounds: bounds
+        )
+
+        return mouth
+            .composited(over: rightEye)
+            .composited(over: leftEye)
+            .composited(over: face)
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius * 0.05])
+            .cropped(to: bounds)
+    }
+
+    private func radialLayer(
+        center: CGPoint,
+        radius0: CGFloat,
+        radius1: CGFloat,
+        color0: CIColor,
+        color1: CIColor,
+        bounds: CGRect
+    ) -> CIImage {
+        CIFilter(
+            name: "CIRadialGradient",
+            parameters: [
+                "inputCenter": CIVector(x: center.x, y: center.y),
+                "inputRadius0": radius0,
+                "inputRadius1": radius1,
+                "inputColor0": color0,
+                "inputColor1": color1
+            ]
+        )?.outputImage?.cropped(to: bounds) ?? CIImage.empty().cropped(to: bounds)
     }
 }
 

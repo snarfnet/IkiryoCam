@@ -15,7 +15,10 @@ struct ContentView: View {
 
     @State private var offsetX: CGFloat = 30
     @State private var offsetY: CGFloat = 0
-    @State private var ghostOpacity: Double = 0.35
+    @State private var ghostOpacity: Double = 0.7
+    @State private var ghostTransparency: Double = 0.45
+    @State private var spectralBoost = false
+    @State private var faceApparition = false
 
     var body: some View {
         NavigationStack {
@@ -208,15 +211,21 @@ struct ContentView: View {
                     Button("リセット") {
                         offsetX = 30
                         offsetY = 0
-                        ghostOpacity = 0.35
+                        ghostOpacity = 0.7
+                        ghostTransparency = 0.45
+                        spectralBoost = false
+                        faceApparition = false
                     }
                     .font(.caption.monospaced().weight(.bold))
                     .foregroundStyle(IkiryoTheme.ash)
                 }
 
-                settingRow(icon: "figure.wave", title: "生霊の強さ", value: $ghostOpacity, range: 0.1...0.7, displayMultiplier: 100)
+                settingRow(icon: "figure.wave", title: "生霊の強さ", value: $ghostOpacity, range: 0.1...1.0, displayMultiplier: 100)
+                settingRow(icon: "sparkles", title: "透明感", value: $ghostTransparency, range: 0...1, displayMultiplier: 100)
                 settingRow(icon: "arrow.left.and.right", title: "横のずれ", value: $offsetX, range: -100...100, suffix: "px")
                 settingRow(icon: "arrow.up.and.down", title: "縦のずれ", value: $offsetY, range: -100...100, suffix: "px")
+                triggerRow(icon: "flame", title: "霊圧強化", note: "残像とちらつきを強くする", isOn: $spectralBoost)
+                triggerRow(icon: "person.crop.circle.badge.exclamationmark", title: "顔の気配", note: "暗い顔のような影を浮かべる", isOn: $faceApparition)
             }
         }
     }
@@ -271,6 +280,28 @@ struct ContentView: View {
                 .foregroundStyle(IkiryoTheme.bone)
                 .frame(width: 52, alignment: .trailing)
         }
+    }
+
+    private func triggerRow(icon: String, title: String, note: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(isOn.wrappedValue ? IkiryoTheme.warning : IkiryoTheme.bone)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.white.opacity(isOn.wrappedValue ? 0.14 : 0.08)))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(IkiryoTheme.bone.opacity(0.95))
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(IkiryoTheme.ash)
+                }
+            }
+        }
+        .tint(IkiryoTheme.warning)
     }
 
     private func settingRow(
@@ -345,7 +376,10 @@ struct ContentView: View {
         let processor = GhostProcessor(
             offsetX: offsetX,
             offsetY: offsetY,
-            ghostOpacity: ghostOpacity
+            ghostOpacity: ghostOpacity,
+            ghostTransparency: ghostTransparency,
+            spectralBoost: spectralBoost,
+            faceApparition: faceApparition
         )
 
         Task {
