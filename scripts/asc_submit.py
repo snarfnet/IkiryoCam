@@ -211,9 +211,25 @@ def update_metadata(app_id: str, version_id: str) -> None:
         app_info_id = body["data"][0]["id"]
         update_app_info(app_info_id)
         update_age_rating(app_info_id)
+    ensure_free_price(app_id)
 
 
 def update_app_info(app_info_id: str) -> None:
+    response = api(
+        "PATCH",
+        f"/appInfos/{app_info_id}",
+        json={
+            "data": {
+                "type": "appInfos",
+                "id": app_info_id,
+                "relationships": {
+                    "primaryCategory": {"data": {"type": "appCategories", "id": "PHOTO_AND_VIDEO"}},
+                },
+            }
+        },
+    )
+    print(f"Primary category: {response.status_code}")
+
     response, body = api_json("GET", f"/appInfos/{app_info_id}/appInfoLocalizations?limit=20")
     if response.status_code != 200:
         print(f"App info localizations: {response.status_code}")
@@ -262,6 +278,36 @@ def update_age_rating(app_info_id: str) -> None:
     }
     response = api("PATCH", f"/ageRatingDeclarations/{app_info_id}", json={"data": {"type": "ageRatingDeclarations", "id": app_info_id, "attributes": attrs}})
     print(f"Age rating: {response.status_code}")
+
+
+def ensure_free_price(app_id: str) -> None:
+    response, body = api_json("GET", f"/apps/{app_id}/appPricePoints?filter[territory]=USA&limit=1")
+    if response.status_code != 200 or not body.get("data"):
+        print(f"Free price point lookup: {response.status_code}")
+        return
+    local_id = "${usa-free}"
+    payload = {
+        "data": {
+            "type": "appPriceSchedules",
+            "relationships": {
+                "app": {"data": {"type": "apps", "id": app_id}},
+                "baseTerritory": {"data": {"type": "territories", "id": "USA"}},
+                "manualPrices": {"data": [{"type": "appPrices", "id": local_id}]},
+            },
+        },
+        "included": [
+            {
+                "type": "appPrices",
+                "id": local_id,
+                "attributes": {"startDate": None},
+                "relationships": {
+                    "appPricePoint": {"data": {"type": "appPricePoints", "id": body["data"][0]["id"]}},
+                },
+            }
+        ],
+    }
+    response = api("POST", "/appPriceSchedules", json=payload)
+    print(f"Free price: {response.status_code}")
 
 
 def ensure_review_detail(version_id: str) -> None:
