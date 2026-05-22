@@ -8,7 +8,7 @@ final class GhostProcessor {
     let ghostOpacity: Double
     let ghostTransparency: Double
     let spectralBoost: Bool
-    let faceApparition: Bool
+    let femaleApparition: Bool
     let handApparition: Bool
     let maleApparition: Bool
     private let faceTexture: CIImage?
@@ -21,7 +21,7 @@ final class GhostProcessor {
         ghostOpacity: Double,
         ghostTransparency: Double,
         spectralBoost: Bool,
-        faceApparition: Bool,
+        femaleApparition: Bool,
         handApparition: Bool,
         maleApparition: Bool
     ) {
@@ -30,7 +30,7 @@ final class GhostProcessor {
         self.ghostOpacity = ghostOpacity
         self.ghostTransparency = ghostTransparency
         self.spectralBoost = spectralBoost
-        self.faceApparition = faceApparition
+        self.femaleApparition = femaleApparition
         self.handApparition = handApparition
         self.maleApparition = maleApparition
         self.faceTexture = Self.loadTexture(named: "GhostFace")
@@ -150,8 +150,8 @@ final class GhostProcessor {
                         "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity * (self.spectralBoost ? 0.36 : 0.22)))
                     ])
 
-                let faceLayer = self.faceApparition
-                    ? self.apparitionFace(bounds: bounds, time: time, opacity: opacity)
+                let femaleLayer = self.femaleApparition
+                    ? self.apparitionFemale(bounds: bounds, time: time, opacity: opacity)
                     : CIImage.empty().cropped(to: bounds)
                 let handLayer = self.handApparition
                     ? self.apparitionHand(bounds: bounds, time: time, opacity: opacity)
@@ -163,7 +163,7 @@ final class GhostProcessor {
                 let result = farTrail
                     .composited(over: trail)
                     .composited(over: ghostAlpha)
-                    .composited(over: faceLayer)
+                    .composited(over: femaleLayer)
                     .composited(over: handLayer)
                     .composited(over: maleLayer)
                     .composited(over: source)
@@ -216,20 +216,22 @@ final class GhostProcessor {
         return CIImage(image: image)
     }
 
-    private func apparitionFace(bounds: CGRect, time: Double, opacity: Double) -> CIImage {
+    private func apparitionFemale(bounds: CGRect, time: Double, opacity: Double) -> CIImage {
         if let faceTexture {
+            let drift = apparitionMotion(time: time, phase: 0.2)
             let center = CGPoint(
-                x: bounds.midX + bounds.width * 0.06 * sin(time * 0.7),
-                y: bounds.midY - bounds.height * 0.06 + bounds.height * 0.02 * cos(time * 0.9)
+                x: bounds.midX - bounds.width * 0.24 + drift.x * bounds.width * 0.07,
+                y: bounds.midY - bounds.height * 0.16 + drift.y * bounds.height * 0.06
             )
             return apparitionTexture(
                 faceTexture,
                 bounds: bounds,
                 center: center,
-                width: bounds.width * 0.78,
-                height: bounds.height * 0.58,
-                opacity: CGFloat(min(max(opacity * 0.92, 0.28), 0.82)),
-                mirror: false
+                width: bounds.width * drift.scale * 0.6,
+                height: bounds.height * drift.scale * 0.48,
+                opacity: CGFloat(min(max(opacity * drift.alpha * 0.9, 0.2), 0.78)),
+                mirror: false,
+                angle: drift.angle
             )
         }
 
@@ -335,20 +337,22 @@ final class GhostProcessor {
     }
 
     private func apparitionHand(bounds: CGRect, time: Double, opacity: Double) -> CIImage {
-        let side: CGFloat = sin(time * 0.45) > 0 ? 1 : -1
+        let side: CGFloat = sin(time * 0.32) > 0 ? 1 : -1
         if let handTexture {
+            let drift = apparitionMotion(time: time, phase: 1.7)
             let center = CGPoint(
-                x: bounds.midX + side * bounds.width * 0.2 + bounds.width * 0.025 * sin(time * 0.9),
-                y: bounds.midY - bounds.height * 0.02 + bounds.height * 0.035 * cos(time * 0.8)
+                x: bounds.midX + side * bounds.width * 0.28 + drift.x * bounds.width * 0.08,
+                y: bounds.midY - bounds.height * 0.28 + drift.y * bounds.height * 0.08
             )
             return apparitionTexture(
                 handTexture,
                 bounds: bounds,
                 center: center,
-                width: bounds.width * 0.78,
-                height: bounds.height * 0.66,
-                opacity: CGFloat(min(max(opacity * 0.95, 0.3), 0.86)),
-                mirror: side < 0
+                width: bounds.width * drift.scale * 0.56,
+                height: bounds.height * drift.scale * 0.5,
+                opacity: CGFloat(min(max(opacity * drift.alpha * 0.92, 0.22), 0.82)),
+                mirror: side < 0,
+                angle: drift.angle + (side > 0 ? -0.16 : 0.16)
             )
         }
 
@@ -411,18 +415,20 @@ final class GhostProcessor {
 
     private func apparitionMale(bounds: CGRect, time: Double, opacity: Double) -> CIImage {
         if let maleTexture {
+            let drift = apparitionMotion(time: time, phase: 3.1)
             let center = CGPoint(
-                x: bounds.midX - bounds.width * 0.18 + bounds.width * 0.045 * sin(time * 0.55),
-                y: bounds.midY - bounds.height * 0.05 + bounds.height * 0.025 * cos(time * 0.75)
+                x: bounds.midX + bounds.width * 0.24 + drift.x * bounds.width * 0.07,
+                y: bounds.midY - bounds.height * 0.05 + drift.y * bounds.height * 0.06
             )
             return apparitionTexture(
                 maleTexture,
                 bounds: bounds,
                 center: center,
-                width: bounds.width * 0.72,
-                height: bounds.height * 0.56,
-                opacity: CGFloat(min(max(opacity * 0.94, 0.3), 0.84)),
-                mirror: false
+                width: bounds.width * drift.scale * 0.58,
+                height: bounds.height * drift.scale * 0.46,
+                opacity: CGFloat(min(max(opacity * drift.alpha * 0.92, 0.22), 0.8)),
+                mirror: false,
+                angle: drift.angle * 0.8
             )
         }
 
@@ -447,7 +453,8 @@ final class GhostProcessor {
         width: CGFloat,
         height: CGFloat,
         opacity: CGFloat,
-        mirror: Bool
+        mirror: Bool,
+        angle: CGFloat
     ) -> CIImage {
         let extent = texture.extent
         guard extent.width > 0, extent.height > 0 else {
@@ -463,6 +470,9 @@ final class GhostProcessor {
             .transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
             .transformed(by: CGAffineTransform(scaleX: xScale, y: yScale))
             .transformed(by: CGAffineTransform(translationX: xOffset, y: yOffset))
+            .transformed(by: CGAffineTransform(translationX: -center.x, y: -center.y))
+            .transformed(by: CGAffineTransform(rotationAngle: angle))
+            .transformed(by: CGAffineTransform(translationX: center.x, y: center.y))
             .cropped(to: bounds)
 
         let lifted = placed
@@ -486,6 +496,15 @@ final class GhostProcessor {
             ])
 
         return lifted.cropped(to: bounds)
+    }
+
+    private func apparitionMotion(time: Double, phase: Double) -> (x: CGFloat, y: CGFloat, scale: CGFloat, alpha: CGFloat, angle: CGFloat) {
+        let x = CGFloat(sin(time * 0.82 + phase) * 0.72 + sin(time * 1.73 + phase * 0.7) * 0.28)
+        let y = CGFloat(cos(time * 0.67 + phase) * 0.7 + sin(time * 1.21 + phase) * 0.3)
+        let scale = CGFloat(1.0 + 0.08 * sin(time * 0.91 + phase) + 0.035 * cos(time * 1.47 + phase))
+        let alpha = CGFloat(0.72 + 0.22 * sin(time * 1.35 + phase) + 0.08 * cos(time * 4.7 + phase))
+        let angle = CGFloat(0.08 * sin(time * 0.58 + phase) + 0.035 * sin(time * 1.31 + phase))
+        return (x, y, max(scale, 0.86), max(min(alpha, 1.0), 0.34), angle)
     }
 
     private func ovalLayer(

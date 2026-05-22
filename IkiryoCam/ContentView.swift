@@ -19,7 +19,7 @@ struct ContentView: View {
     @State private var ghostOpacity: Double = 0.7
     @State private var ghostTransparency: Double = 0.45
     @State private var spectralBoost = false
-    @State private var faceApparition = false
+    @State private var femaleApparition = false
     @State private var handApparition = false
     @State private var maleApparition = false
 
@@ -160,7 +160,7 @@ struct ContentView: View {
                             settingSummary(title: "生霊の強さ", value: "\(Int(ghostOpacity * 100))")
                             settingSummary(title: "透明感", value: "\(Int(ghostTransparency * 100))")
                             settingSummary(title: "霊圧強化", value: spectralBoost ? "ON" : "OFF")
-                            settingSummary(title: "顔の気配", value: faceApparition ? "ON" : "OFF")
+                            settingSummary(title: "女の気配", value: femaleApparition ? "ON" : "OFF")
                             settingSummary(title: "手の気配", value: handApparition ? "ON" : "OFF")
                             settingSummary(title: "男の気配", value: maleApparition ? "ON" : "OFF")
                         }
@@ -203,7 +203,7 @@ struct ContentView: View {
         ghostOpacity = 0.7
         ghostTransparency = 0.45
         spectralBoost = false
-        faceApparition = false
+        femaleApparition = false
         handApparition = false
         maleApparition = false
     }
@@ -325,7 +325,7 @@ struct ContentView: View {
                 settingRow(icon: "arrow.left.and.right", title: "横のずれ", value: $offsetX, range: -100...100, suffix: "px")
                 settingRow(icon: "arrow.up.and.down", title: "縦のずれ", value: $offsetY, range: -100...100, suffix: "px")
                 triggerRow(icon: "flame", title: "霊圧強化", note: "残像とちらつきを強くする", isOn: $spectralBoost)
-                triggerRow(icon: "person.crop.circle.badge.exclamationmark", title: "顔の気配", note: "暗い顔のような影を浮かべる", isOn: $faceApparition)
+                triggerRow(icon: "person.crop.circle.badge.exclamationmark", title: "女の気配", note: "女性霊の顔を左側に浮かべる", isOn: $femaleApparition)
                 triggerRow(icon: "hand.raised", title: "手の気配", note: "画面端に白い手形を浮かべる", isOn: $handApparition)
                 triggerRow(icon: "person.fill.viewfinder", title: "男の気配", note: "男性霊の顔を別に浮かべる", isOn: $maleApparition)
             }
@@ -481,7 +481,7 @@ struct ContentView: View {
             ghostOpacity: ghostOpacity,
             ghostTransparency: ghostTransparency,
             spectralBoost: spectralBoost,
-            faceApparition: faceApparition,
+            femaleApparition: femaleApparition,
             handApparition: handApparition,
             maleApparition: maleApparition
         )
